@@ -5,7 +5,7 @@ when the access token expires (401 response).
 
 Setup:
   1. Create an Oura app at https://cloud.ouraring.com/v2/docs
-  2. Run `python oura_auth.py` to get your refresh token
+  2. Run `python scripts/oura_auth.py` to get your refresh token
   3. Set OURA_CLIENT_ID, OURA_CLIENT_SECRET, OURA_REFRESH_TOKEN in .env
 """
 

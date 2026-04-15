@@ -7,7 +7,7 @@ Setup:
   1. Go to https://cloud.ouraring.com/v2/docs and create an application
      - Set redirect URI to: http://localhost:8080/oura/callback
   2. Copy your Client ID and Client Secret
-  3. Run: python oura_auth.py
+  3. Run: python scripts/oura_auth.py
   4. Follow the prompts — browser will open for Oura login
   5. Tokens will be printed and optionally written to .env
 
@@ -117,7 +117,7 @@ def main():
     print()
 
     # Check if already in .env
-    env_path = Path(__file__).resolve().parent / ".env"
+    env_path = Path(__file__).resolve().parent.parent / ".env"
     client_id = os.getenv("OURA_CLIENT_ID", "")
     client_secret = os.getenv("OURA_CLIENT_SECRET", "")
 

@@ -1369,7 +1369,7 @@ if HAS_FASTAPI:
                     if ret == 0 and errcode == 0:
                         return {"ok": True}
                     if errcode == -14 or ret == -14:
-                        return {"ok": False, "error": "Token expired — re-run weixin_auth.py"}
+                        return {"ok": False, "error": "Token expired — re-run scripts/weixin_auth.py"}
                     return {"ok": False, "error": f"API error: ret={ret} errcode={errcode}"}
         except asyncio.TimeoutError:
             return {"ok": False, "error": "Connection timed out (10s)"}

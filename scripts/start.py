@@ -1,7 +1,7 @@
 """MochiBot launcher with automatic restart support.
 
 Usage:
-    python start.py
+    python scripts/start.py
 
 When the bot requests a restart (e.g. via the admin portal's restart button),
 it exits with code 42. This wrapper detects that and relaunches automatically.

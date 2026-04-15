@@ -1,7 +1,7 @@
 """WeChat QR login script — run once to obtain bot credentials.
 
 Usage:
-    python weixin_auth.py
+    python scripts/weixin_auth.py
 
 Flow:
     1. Fetches QR code from WeChat iLink API

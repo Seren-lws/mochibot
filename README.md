@@ -169,10 +169,10 @@ git clone https://github.com/shikidmsh-rgb/mochibot.git && cd mochibot
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env        # 填写必要配置
-python start.py
+python scripts/start.py
 ```
 
-`start.py` 会在 bot 请求重启时（如通过管理后台的重启按钮）自动重新启动进程。如果直接运行 `python -m mochi.main`，重启按钮将不会生效。
+`scripts/start.py` 会在 bot 请求重启时（如通过管理后台的重启按钮）自动重新启动进程。如果直接运行 `python -m mochi.main`，重启按钮将不会生效。
 
 ### 无 Docker 部署（systemd）
 
@@ -317,7 +317,7 @@ TIER_{LITE,CHAT,DEEP}_{PROVIDER,API_KEY,MODEL,BASE_URL}
 
 **向量嵌入** — `EMBEDDING_PROVIDER`（openai / azure_openai / ollama / none）、`EMBEDDING_API_KEY`、`EMBEDDING_MODEL`。配置后记忆检索从纯关键词升级为语义搜索，并通过 `sqlite-vec`（已包含在依赖中）实现原生向量 KNN 加速。
 
-**Oura Ring** — `OURA_CLIENT_ID`、`OURA_CLIENT_SECRET`（运行 `python oura_auth.py` 设置）
+**Oura Ring** — `OURA_CLIENT_ID`、`OURA_CLIENT_SECRET`（运行 `python scripts/oura_auth.py` 设置）
 
 完整列表见 [.env.example](.env.example)（关键参数）；详见 `mochi/config.py`（~80 个可调参数）。
 

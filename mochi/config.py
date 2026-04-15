@@ -104,7 +104,7 @@ TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
 # ═══════════════════════════════════════════════════════════════════════════
 # Transport — WeChat (optional secondary transport)
 # ═══════════════════════════════════════════════════════════════════════════
-# Run `python weixin_auth.py` to scan QR code and get your token.
+# Run `python scripts/weixin_auth.py` to scan QR code and get your token.
 
 WEIXIN_ENABLED = _env_bool("WEIXIN_ENABLED", False)
 WEIXIN_BOT_TOKEN = _env("WEIXIN_BOT_TOKEN")
@@ -235,7 +235,7 @@ WEB_SEARCH_TIMEOUT_S = _env_int("WEB_SEARCH_TIMEOUT_S", 20)
 # ═══════════════════════════════════════════════════════════════════════════
 # Oura Ring (optional — OAuth2)
 # ═════════════════════════════════════════════════════════════════════════
-# Run `python oura_auth.py` to authorize and get your tokens.
+# Run `python scripts/oura_auth.py` to authorize and get your tokens.
 
 OURA_CLIENT_ID = _env("OURA_CLIENT_ID")
 OURA_CLIENT_SECRET = _env("OURA_CLIENT_SECRET")

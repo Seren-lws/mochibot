@@ -28,10 +28,10 @@ Wraps oura_client.get_daily_summary() with a 10-min API cache.
 
 ## Config
 
-Oura uses OAuth2 for authentication. Run `python oura_auth.py` to authorize.
+Oura uses OAuth2 for authentication. Run `python scripts/oura_auth.py` to authorize.
 
 | Env Var | Required | Description |
 |---------|----------|-------------|
 | OURA_CLIENT_ID | yes | OAuth2 client ID from your Oura app |
 | OURA_CLIENT_SECRET | yes | OAuth2 client secret |
-| OURA_REFRESH_TOKEN | yes | Obtained by running `oura_auth.py` |
+| OURA_REFRESH_TOKEN | yes | Obtained by running `scripts/oura_auth.py` |

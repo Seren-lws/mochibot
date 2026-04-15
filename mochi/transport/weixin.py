@@ -1,7 +1,7 @@
 """WeChat transport — sends and receives messages via WeChat iLink Bot API.
 
 Optional secondary transport. Requires WEIXIN_ENABLED=true and
-WEIXIN_BOT_TOKEN in .env. Run `python weixin_auth.py` to obtain a token.
+WEIXIN_BOT_TOKEN in .env. Run `python scripts/weixin_auth.py` to obtain a token.
 """
 
 import asyncio
@@ -574,7 +574,7 @@ class WeixinTransport(Transport):
             # Session expired — retry after delay
             log.warning(
                 "Poll loop exited (session expired). "
-                "Retrying in %ds... Re-login: python weixin_auth.py",
+                "Retrying in %ds... Re-login: python scripts/weixin_auth.py",
                 WEIXIN_SESSION_EXPIRED_RETRY_S,
             )
 
@@ -630,7 +630,7 @@ class WeixinTransport(Transport):
                         log.error(
                             "[SESSION_EXPIRED] WeChat session expired "
                             "(errcode %s). Re-login required: "
-                            "python weixin_auth.py",
+                            "python scripts/weixin_auth.py",
                             errcode,
                         )
                         self._session_expired = True
