@@ -625,9 +625,10 @@ async def chat_proactive(findings: list[dict], user_id: int) -> str | None:
                  len(findings), reply[:80])
         return reply
 
-    except Exception as e:
-        log.error("chat_proactive failed: %s", e, exc_info=True)
-        return None
+    except Exception:
+        # Let exceptions bubble up to _dispatch_proactive for recording
+        # in heartbeat_log (observability: proactive_failed needs a reason).
+        raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -160,17 +160,17 @@ class TestChatProactive:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_llm_exception_returns_none(self):
-        """chat_proactive returns None on LLM failure."""
+    async def test_llm_exception_bubbles_up(self):
+        """chat_proactive lets exceptions propagate for caller observability."""
         with patch("mochi.ai_client.get_client_for_tier", side_effect=Exception("API down")), \
              patch("mochi.ai_client.get_prompt", return_value="Prompt: {findings_text}"), \
              patch("mochi.ai_client.get_core_memory", return_value=""), \
              patch("mochi.ai_client.get_recent_messages", return_value=[]):
-            result = await chat_proactive(
-                [{"topic": "test", "summary": "test"}],
-                user_id=1,
-            )
-        assert result is None
+            with pytest.raises(Exception, match="API down"):
+                await chat_proactive(
+                    [{"topic": "test", "summary": "test"}],
+                    user_id=1,
+                )
 
     @pytest.mark.asyncio
     async def test_empty_llm_response_returns_none(self):

@@ -864,8 +864,13 @@ async def _dispatch_proactive(notify_actions: list[dict], user_id: int) -> None:
     topics = [a.get("topic", "general") for a in notify_actions]
     topics_str = ",".join(topics)
 
-    msg = await _llm_with_timeout(
-        chat_proactive(notify_actions, user_id), "chat_proactive")
+    try:
+        msg = await _llm_with_timeout(
+            chat_proactive(notify_actions, user_id), "chat_proactive")
+    except Exception as e:
+        log.error("chat_proactive exception: %s", e, exc_info=True)
+        log_heartbeat(_state, "proactive_failed", f"exception: {e}"[:200])
+        return
 
     if msg and msg != "[SKIP]":
         if _send_callback:
@@ -891,7 +896,7 @@ async def _dispatch_proactive(notify_actions: list[dict], user_id: int) -> None:
 
     else:
         log.warning("chat_proactive returned None for %d finding(s)", len(notify_actions))
-        log_heartbeat(_state, "proactive_failed")
+        log_heartbeat(_state, "proactive_failed", "returned None")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
