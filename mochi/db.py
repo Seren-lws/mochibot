@@ -283,6 +283,15 @@ def init_db() -> None:
             ON kg_triples(subject_id, valid_to);
         CREATE INDEX IF NOT EXISTS idx_kg_triple_user
             ON kg_triples(user_id, valid_to);
+
+        -- Conversation summary L2 cache (bucketed, survives restarts)
+        CREATE TABLE IF NOT EXISTS conv_summary_cache (
+            user_id    INTEGER NOT NULL,
+            bucket     INTEGER NOT NULL,
+            summary    TEXT    NOT NULL,
+            created_at TEXT    NOT NULL,
+            PRIMARY KEY (user_id, bucket)
+        );
     """)
 
     # ── Migrations (safe column additions for existing databases) ──────
@@ -675,6 +684,49 @@ def mark_messages_processed(user_id: int, up_to_id: int) -> None:
     )
     conn.commit()
     conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Conversation Summary Cache (L2 persistence for bucketed summaries)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def get_cached_summary(user_id: int, bucket: int) -> str | None:
+    """Fetch cached conversation summary by (user_id, bucket) PK."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT summary FROM conv_summary_cache WHERE user_id = ? AND bucket = ?",
+        (user_id, bucket),
+    ).fetchone()
+    conn.close()
+    return row["summary"] if row else None
+
+
+def save_cached_summary(user_id: int, bucket: int, summary: str) -> None:
+    """Upsert a conversation summary into L2 cache."""
+    now = datetime.now(TZ).isoformat()
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO conv_summary_cache (user_id, bucket, summary, created_at) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(user_id, bucket) DO UPDATE SET summary = excluded.summary, created_at = excluded.created_at",
+        (user_id, bucket, summary, now),
+    )
+    conn.commit()
+    conn.close()
+
+
+def cleanup_summary_cache(retain_days: int = 3) -> int:
+    """Delete cache entries older than retain_days. Returns count deleted."""
+    cutoff = (datetime.now(TZ) - timedelta(days=retain_days)).isoformat()
+    conn = _connect()
+    cur = conn.execute(
+        "DELETE FROM conv_summary_cache WHERE created_at < ?", (cutoff,)
+    )
+    deleted = cur.rowcount
+    conn.commit()
+    conn.close()
+    return deleted
 
 
 # ═══════════════════════════════════════════════════════════════════════════

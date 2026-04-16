@@ -485,7 +485,7 @@ Zone B: 能力与参考 (reference — 中间)
 ├── [动态] habits        习惯列表（打卡用，按需）
 ├── [动态] prompt_sections  技能注入的 prompt 片段（notes 等）
 ├── [动态] bubble        消息分段指令（按需）
-├── [预留] conv_summary  对话早期摘要
+├── [动态] conv_summary  对话早期摘要（超过 MAX_HISTORY_TURNS 时自动生成）
 
 Zone C: 当下语境 (recency — prompt 最后)
 ├── runtime_context.md   今日状态速览 + 今日日记（占位符渲染，无数据时移除）

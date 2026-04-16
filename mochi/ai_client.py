@@ -19,7 +19,7 @@ from mochi.llm import get_client_for_tier, LLMResponse
 from mochi.prompt_loader import get_prompt, get_system_chat_modules
 from mochi.db import (
     save_message, get_recent_messages, get_core_memory, log_usage,
-    recall_memory,
+    recall_memory, get_cached_summary, save_cached_summary,
 )
 from mochi.skills.habit.queries import list_habits
 import mochi.skills as skill_registry
@@ -137,6 +137,159 @@ def _retrieve_memories_for_turn(text: str, user_id: int) -> list[dict]:
         return []
 
 
+# ── Conversation summary (LLM-powered, L1 memory + L2 DB cache) ────────────
+
+_conv_summary_cache: dict[tuple[int, int], str] = {}
+
+
+def prewarm_conv_summary_if_needed(user_id: int) -> None:
+    """Pre-warm conv summary cache if next message will cross bucket boundary.
+
+    Call this after a response is sent. If adding 2 more messages (next
+    user+assistant pair) would cross into a new bucket, we trigger background
+    generation so the user doesn't wait.
+
+    NOTE: Must be called from an async context (uses asyncio.create_task).
+    """
+    from mochi.config import (
+        MAX_HISTORY_TURNS, CONV_SUMMARY_BUCKET_SIZE, CONV_SUMMARY_LOOKAHEAD_MSGS,
+    )
+
+    lookahead = (MAX_HISTORY_TURNS + CONV_SUMMARY_LOOKAHEAD_MSGS) * 2  # turns → messages
+    full = get_recent_messages(user_id, limit=lookahead)
+    current_bucket = (len(full) // CONV_SUMMARY_BUCKET_SIZE) * CONV_SUMMARY_BUCKET_SIZE
+    next_bucket = ((len(full) + 2) // CONV_SUMMARY_BUCKET_SIZE) * CONV_SUMMARY_BUCKET_SIZE
+
+    if next_bucket > current_bucket:
+        cache_key = (user_id, next_bucket)
+        if cache_key not in _conv_summary_cache:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                log.debug("prewarm_conv_summary: no event loop, skipping")
+                return
+            loop.create_task(_prewarm_conv_summary(user_id, next_bucket, full))
+            log.info("Conv summary pre-warm scheduled for user %d (bucket %d->%d)",
+                     user_id, current_bucket, next_bucket)
+
+
+async def _prewarm_conv_summary(
+    user_id: int, target_bucket: int, history: list[dict],
+) -> None:
+    """Background task to pre-generate conv summary for upcoming bucket."""
+    cache_key = (user_id, target_bucket)
+    if cache_key in _conv_summary_cache:
+        return
+
+    from mochi.config import MAX_HISTORY_TURNS
+    recent_msg_count = MAX_HISTORY_TURNS * 2
+
+    if len(history) <= recent_msg_count:
+        return
+
+    older = history[:-recent_msg_count]
+    if not older:
+        return
+
+    summary = await _generate_summary(user_id, older, usage_stage="conversation_summary_prewarm")
+    if summary:
+        _conv_summary_cache[cache_key] = summary
+        try:
+            await asyncio.to_thread(save_cached_summary, user_id, target_bucket, summary)
+        except Exception:
+            pass  # non-critical
+        log.info("Conv summary pre-warmed for user %d bucket %d: %d older msgs -> %d chars",
+                 user_id, target_bucket, len(older), len(summary))
+
+
+async def _get_conv_summary(user_id: int) -> str | None:
+    """Return a summary of conversation turns older than the current window.
+
+    Fetches a wider history from DB. If messages beyond MAX_HISTORY_TURNS exist,
+    summarizes the older portion and caches the result for the session.
+    Returns None when history fits within the window (nothing to summarize).
+    """
+    from mochi.config import (
+        MAX_HISTORY_TURNS, CONV_SUMMARY_BUCKET_SIZE, CONV_SUMMARY_LOOKAHEAD_MSGS,
+    )
+
+    lookahead = (MAX_HISTORY_TURNS + CONV_SUMMARY_LOOKAHEAD_MSGS) * 2  # turns → messages
+    full = get_recent_messages(user_id, limit=lookahead)
+    recent_msg_count = MAX_HISTORY_TURNS * 2
+
+    if len(full) <= recent_msg_count:
+        return None
+
+    older = full[:-recent_msg_count]
+    if not older:
+        return None
+
+    count_bucket = (len(full) // CONV_SUMMARY_BUCKET_SIZE) * CONV_SUMMARY_BUCKET_SIZE
+    cache_key = (user_id, count_bucket)
+
+    if cache_key in _conv_summary_cache:
+        return _conv_summary_cache[cache_key]
+
+    # L2: check DB cache (survives restarts)
+    db_hit = get_cached_summary(user_id, count_bucket)
+    if db_hit:
+        _conv_summary_cache[cache_key] = db_hit
+        log.info("Conv summary loaded from DB for user %d bucket %d", user_id, count_bucket)
+        return db_hit
+
+    summary = await _generate_summary(user_id, older, usage_stage="conversation_summary")
+    if summary:
+        _conv_summary_cache[cache_key] = summary
+        # Persist to L2 (DB) — fire-and-forget
+        try:
+            asyncio.ensure_future(
+                asyncio.to_thread(save_cached_summary, user_id, count_bucket, summary)
+            )
+        except Exception:
+            pass  # non-critical
+        log.info("Conv summary generated for user %d: %d older msgs -> %d chars",
+                 user_id, len(older), len(summary))
+    return summary
+
+
+async def _generate_summary(
+    user_id: int, older_messages: list[dict], *, usage_stage: str,
+) -> str | None:
+    """Generate a summary from older messages using the LITE tier model."""
+    conv_text = "\n".join(
+        f"{'用户' if m['role'] == 'user' else '助手'}: {m['content']}"
+        for m in older_messages
+        if isinstance(m.get("content"), str)
+    )
+    if not conv_text.strip():
+        return None
+
+    try:
+        client = get_client_for_tier("lite")
+        prompt = get_prompt("conv_summary")
+        msgs = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": conv_text},
+        ]
+        response = await asyncio.to_thread(
+            client.chat, messages=msgs, max_tokens=300, temperature=0.3,
+        )
+        if response.total_tokens:
+            log_usage(
+                response.prompt_tokens,
+                response.completion_tokens,
+                response.total_tokens,
+                model_role="LITE",
+                call_type="background",
+                tool_name="conv_summary",
+                usage_stage=usage_stage,
+            )
+        return (response.content or "").strip() or None
+    except Exception as e:
+        log.warning("Conv summary generation failed for user %d: %s", user_id, e)
+        return None
+
+
 def _expand_history(history: list[dict]) -> list[dict]:
     """Expand conversation history into API-native messages.
 
@@ -247,7 +400,8 @@ def _build_system_prompt(user_id: int, usage_rules: str = "",
                          transport: str = "",
                          recalled_memories: list[dict] | None = None,
                          diary_status: str = "",
-                         diary_journal: str = "") -> str:
+                         diary_journal: str = "",
+                         conv_summary: str = "") -> str:
     """Build the system prompt using Zone A/B/C architecture.
 
     Zone A (primacy)  — identity & relationship (soul, user, core memory,
@@ -336,7 +490,9 @@ def _build_system_prompt(user_id: int, usage_rules: str = "",
         if bubble_inst:
             parts.append(bubble_inst)
 
-    # [预留] conv_summary — 对话早期摘要，功能实现后在此注入
+    # Conversation summary (older turns beyond history window)
+    if conv_summary:
+        parts.append(f"## 本次对话早期内容（摘要）\n{conv_summary}")
 
     # ── Zone C: 当下语境 (recency — prompt 最后) ────────────────
     if "runtime_context" in modules:
@@ -419,17 +575,26 @@ async def chat(message: IncomingMessage) -> ChatResult:
     # Pre-fetch habits (fast sync DB) — shared by router hint + system prompt
     habits = await asyncio.to_thread(list_habits, user_id)
 
+    # Safe wrapper for conv_summary (failure must not block chat)
+    async def _safe_conv_summary() -> str | None:
+        try:
+            return await _get_conv_summary(user_id)
+        except Exception as e:
+            log.warning("Conv summary skipped: %s", e)
+            return None
+
     if TOOL_ROUTER_ENABLED:
         from mochi.tool_router import (
             classify_skills, resolve_tier, REQUEST_TOOLS_DEF, validate_escalation,
         )
         # Launch router (with habits hint) + remaining DB fetches concurrently
-        skill_names, core_memory, history, recalled_memories = await asyncio.gather(
+        skill_names, core_memory, history, recalled_memories, conv_summary = await asyncio.gather(
             classify_skills(text, user_id=user_id, habits=habits,
                             transport=message.transport),
             asyncio.to_thread(get_core_memory, user_id),
             asyncio.to_thread(get_recent_messages, user_id, 20),
             asyncio.to_thread(_retrieve_memories_for_turn, text, user_id),
+            _safe_conv_summary(),
         )
 
         # Always-on skills (declared in SKILL.md) + router-selected, deduplicated
@@ -456,10 +621,11 @@ async def chat(message: IncomingMessage) -> ChatResult:
     else:
         tools = skill_registry.get_tools(transport=message.transport)
         # Parallel DB fetches even when router is off
-        core_memory, history, recalled_memories = await asyncio.gather(
+        core_memory, history, recalled_memories, conv_summary = await asyncio.gather(
             asyncio.to_thread(get_core_memory, user_id),
             asyncio.to_thread(get_recent_messages, user_id, 20),
             asyncio.to_thread(_retrieve_memories_for_turn, text, user_id),
+            _safe_conv_summary(),
         )
 
     # ── Policy: filter denied tools before LLM sees them ──
@@ -481,6 +647,7 @@ async def chat(message: IncomingMessage) -> ChatResult:
         core_memory=core_memory, habits=habits, transport=message.transport,
         recalled_memories=recalled_memories,
         diary_status="", diary_journal=_dj,
+        conv_summary=conv_summary or "",
     )
 
     # Build messages array
@@ -528,6 +695,7 @@ async def chat(message: IncomingMessage) -> ChatResult:
                 if tool_names_used else None
             )
             save_message(user_id, "assistant", reply, tool_history=tool_history_json)
+            prewarm_conv_summary_if_needed(user_id)
             return ChatResult(text=reply, stickers=pending_stickers)
 
         # Add assistant message with tool_calls to context
@@ -626,6 +794,7 @@ async def chat(message: IncomingMessage) -> ChatResult:
         if tool_names_used else None
     )
     save_message(user_id, "assistant", reply, tool_history=tool_history_json)
+    prewarm_conv_summary_if_needed(user_id)
     return ChatResult(text=reply, stickers=pending_stickers)
 
 

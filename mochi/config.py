@@ -185,6 +185,15 @@ SILENCE_SLEEP_AFTER_HOUR = _env_int("SILENCE_SLEEP_AFTER_HOUR", 23)  # DEPRECATE
 SILENCE_SLEEP_THRESHOLD_HOURS = _env_float("SILENCE_SLEEP_THRESHOLD_HOURS", 1.0)  # DEPRECATED
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Conversation Summary (older turns → compact digest injected into prompt)
+# ═══════════════════════════════════════════════════════════════════════════
+
+MAX_HISTORY_TURNS: int = _env_int("MAX_HISTORY_TURNS", 10)
+CONV_SUMMARY_BUCKET_SIZE: int = _env_int("CONV_SUMMARY_BUCKET_SIZE", 16)
+CONV_SUMMARY_LOOKAHEAD_MSGS: int = _env_int("CONV_SUMMARY_LOOKAHEAD_MSGS", 8)
+CONV_SUMMARY_CACHE_RETAIN_DAYS: int = _env_int("CONV_SUMMARY_CACHE_RETAIN_DAYS", 3)
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Memory
 # ═══════════════════════════════════════════════════════════════════════════
 
