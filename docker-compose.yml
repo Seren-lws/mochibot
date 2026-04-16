@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes:
+      # data/ includes the SQLite DB and prompt overrides under data/prompts/
       - ./data:/app/data
-      - ./prompts:/app/prompts
     ports:
       - "8080:8080"

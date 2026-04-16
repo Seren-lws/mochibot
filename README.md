@@ -161,6 +161,7 @@ docker compose up -d         # 后台运行
 更新：`git pull && docker compose up -d --build`
 
 数据保存在 `data/` 目录，容器删除不丢失。
+通过管理后台修改的 prompt 会写到 `data/prompts/`，也会随这个卷一起持久化。
 
 ### 手动运行（无 Docker / 无 systemd）
 

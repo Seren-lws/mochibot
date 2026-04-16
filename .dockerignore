@@ -10,8 +10,7 @@ __pycache__
 .pytest_cache
 .venv
 venv
-*.md
-!requirements.txt
+# Keep runtime markdowns (prompts and SKILL.md) in the build context.
 LICENSE
 .claude/
 .playwright-mcp/
