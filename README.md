@@ -85,6 +85,7 @@
 | **weather** | 天气查询——通过 wttr.in 获取，心跳中自动带入上下文 |
 | **web_search** | 联网搜索——DuckDuckGo，无需 API key |
 | **sticker** | 表情包——学习你转发的贴纸，聊天时自动发（仅 Telegram） |
+| **skill_management** | 技能管理——通过对话列出、开关、配置所有技能 |
 
 > **想加一个新 Skill？** 在 `mochi/skills/` 下新建文件夹，放入 `SKILL.md` + `handler.py`，重启 bot 就会自动注册。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
