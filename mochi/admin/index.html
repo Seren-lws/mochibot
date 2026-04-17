@@ -171,6 +171,7 @@ select.form-input { cursor:pointer; }
     <button class="nav-item" data-page="skills"><span class="nav-icon">⚡</span> 技能</button>
     <button class="nav-item" data-page="prompts"><span class="nav-icon">📝</span> 人格 & Prompts</button>
     <button class="nav-item" data-page="memory"><span class="nav-icon">🧠</span> 记忆库</button>
+    <button class="nav-item" data-page="migration"><span class="nav-icon">📦</span> 搬家</button>
     <button class="nav-item" data-page="promptdump" id="nav-promptdump" style="display:none"><span class="nav-icon">🔍</span> Prompt Dump</button>
   </nav>
   <div style="padding:8px 12px; border-top:1px solid var(--border);">
@@ -256,6 +257,14 @@ select.form-input { cursor:pointer; }
     <div id="l2memory-content">
       <div class="loading"><div class="spinner"></div> 加载中...</div>
     </div>
+  </div>
+</section>
+
+<!-- ═══════ Page 6: Migration ═══════ -->
+<section id="page-migration" class="page">
+  <h2 class="page-title">📦 ChatGPT 搬家</h2>
+  <div id="migration-content">
+    <div class="loading"><div class="spinner"></div> 加载中...</div>
   </div>
 </section>
 
@@ -361,7 +370,7 @@ function statusIcon(type) {
 
 // ── Navigation ───────────────────────────
 const loaded = {};
-const loaders = { welcome:loadWelcome, models:loadModels, heartbeat:loadHeartbeat, basic:loadBasic, skills:loadSkills, prompts:loadPrompts, memory:loadMemory, promptdump:loadPromptDump };
+const loaders = { welcome:loadWelcome, models:loadModels, heartbeat:loadHeartbeat, basic:loadBasic, skills:loadSkills, prompts:loadPrompts, memory:loadMemory, migration:loadMigration, promptdump:loadPromptDump };
 
 // Debug mode: ?debug=1 shows hidden debug tools
 const _debugMode = new URLSearchParams(window.location.search).has('debug');
@@ -2745,6 +2754,370 @@ async function loadPromptDump(mode) {
   } catch (e) {
     el.innerHTML = '<div class="loading" style="color:var(--error)">❌ ' + esc(e.message) + '</div>';
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Migration (搬家)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _migSession = null;
+let _migStats = null;
+let _migModels = [];
+let _migContextWindows = {};
+let _migJobId = null;
+let _migJobPollTimer = null;
+let _migPollStart = null;
+let _migResult = null;
+
+async function loadMigration() {
+  const el = document.getElementById('migration-content');
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">从 ChatGPT 导入</div>
+      <p style="font-size:13px;color:var(--text-soft);margin-bottom:12px">
+        上传从 ChatGPT 导出的 JSON 聊天记录文件，系统将自动提取你的 AI 人格、用户画像和记忆。
+      </p>
+      <div style="background:var(--warning);color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:16px">
+        ⚠️ 提取过程使用 LLM 处理聊天记录，根据文件大小可能消耗大量 token，费用由你的 API key 承担。
+      </div>
+      <div class="form-group">
+        <label class="form-label">选择 ChatGPT 导出文件（JSON，最大 50MB）</label>
+        <input type="file" id="mig-file-input" accept=".json" class="form-input" style="padding:6px">
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-primary" onclick="migUpload()">上传并分析</button>
+        <span id="mig-upload-status" style="font-size:13px"></span>
+      </div>
+    </div>
+  `;
+  // Reset state
+  _migSession = null; _migStats = null; _migResult = null;
+  _migJobId = null; _migPollStart = null;
+  if (_migJobPollTimer) { clearInterval(_migJobPollTimer); _migJobPollTimer = null; }
+}
+
+async function migUpload() {
+  const fileInput = document.getElementById('mig-file-input');
+  const file = fileInput?.files?.[0];
+  if (!file) return showToast('请先选择文件');
+  if (file.size > 50 * 1024 * 1024) return showToast('文件超过 50MB 限制');
+
+  const statusEl = document.getElementById('mig-upload-status');
+  statusEl.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;vertical-align:middle"></span> 上传分析中...';
+
+  const formData = new FormData();
+  formData.append('file', file);
+  const headers = {};
+  if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+
+  try {
+    const r = await fetch('/api/migration/upload', {method:'POST', headers, body:formData});
+    if (!r.ok) { const t = await r.text(); throw new Error(r.status + ': ' + t); }
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || '上传失败');
+    _migSession = data.session_id;
+    _migStats = data;
+
+    // Also load models
+    const mdata = await api('GET', '/migration/models');
+    _migModels = mdata.models || [];
+    _migContextWindows = mdata.context_windows || {};
+
+    migShowStep2();
+  } catch(e) {
+    statusEl.innerHTML = `<span style="color:var(--danger)">❌ ${esc(e.message)}</span>`;
+  }
+}
+
+function migShowStep2() {
+  const el = document.getElementById('migration-content');
+  const s = _migStats;
+
+  if (_migModels.length === 0) {
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-title">⚠️ 未配置模型</div>
+        <p style="font-size:13px;color:var(--text-soft)">请先到「模型」页面配置至少一个 LLM 模型，再使用搬家功能。</p>
+        <button class="btn btn-ghost" style="margin-top:12px" onclick="loadMigration()">← 返回</button>
+      </div>
+    `;
+    return;
+  }
+
+  const modelOpts = _migModels.map(m =>
+    `<option value="${esc(m.name)}">${esc(m.name)} (${esc(m.model)})</option>`
+  ).join('');
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">分析结果</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:16px">
+        <div style="background:var(--primary-bg);padding:12px;border-radius:8px;text-align:center">
+          <div style="font-size:22px;font-weight:700;color:var(--primary)">${s.conversation_count}</div>
+          <div style="font-size:12px;color:var(--text-soft)">对话数</div>
+        </div>
+        <div style="background:var(--primary-bg);padding:12px;border-radius:8px;text-align:center">
+          <div style="font-size:22px;font-weight:700;color:var(--primary)">${s.raw_message_count}</div>
+          <div style="font-size:12px;color:var(--text-soft)">原始消息</div>
+        </div>
+        <div style="background:var(--primary-bg);padding:12px;border-radius:8px;text-align:center">
+          <div style="font-size:22px;font-weight:700;color:var(--primary)">${s.filtered_message_count}</div>
+          <div style="font-size:12px;color:var(--text-soft)">过滤后消息</div>
+        </div>
+        <div style="background:var(--primary-bg);padding:12px;border-radius:8px;text-align:center">
+          <div style="font-size:22px;font-weight:700;color:var(--primary)">${s.estimated_tokens.toLocaleString()}</div>
+          <div style="font-size:12px;color:var(--text-soft)">预估 tokens</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">选择用于提取的模型</label>
+        <select id="mig-model-select" class="form-input" style="width:auto;min-width:240px" onchange="migCheckContext()">
+          ${modelOpts}
+        </select>
+      </div>
+      <div id="mig-context-warning" style="margin-bottom:12px"></div>
+
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-primary" onclick="migStartExtract()" id="mig-extract-btn">开始提取</button>
+        <button class="btn btn-ghost" onclick="loadMigration()">← 返回</button>
+      </div>
+    </div>
+  `;
+  migCheckContext();
+}
+
+function migCheckContext() {
+  const sel = document.getElementById('mig-model-select');
+  const warn = document.getElementById('mig-context-warning');
+  if (!sel || !warn) return;
+
+  const modelName = sel.value;
+  const modelEntry = _migModels.find(m => m.name === modelName);
+  const modelId = modelEntry ? modelEntry.model.toLowerCase() : '';
+  const tokens = _migStats.estimated_tokens;
+
+  let ctxSize = null;
+  for (const [key, val] of Object.entries(_migContextWindows)) {
+    if (modelId.includes(key)) { ctxSize = val; break; }
+  }
+
+  if (!ctxSize) {
+    warn.innerHTML = '<span style="font-size:12px;color:var(--text-soft)">未知模型的 context 窗口大小，无法预估是否超限</span>';
+    return;
+  }
+
+  const pct = tokens / ctxSize;
+  if (pct >= 0.8) {
+    warn.innerHTML = `<div style="background:#FFF3E0;color:#E65100;padding:10px 14px;border-radius:8px;font-size:13px">
+      ⚠️ 预估 token 数约占模型 context 的 ${Math.round(pct*100)}%（${tokens.toLocaleString()} / ${ctxSize.toLocaleString()}），内容可能被截断。建议选择 context 更大的模型。
+    </div>`;
+  } else {
+    warn.innerHTML = `<span style="font-size:12px;color:var(--success)">✓ 预估 token 数约占 context 的 ${Math.round(pct*100)}%，可正常处理</span>`;
+  }
+}
+
+async function migStartExtract() {
+  const sel = document.getElementById('mig-model-select');
+  const modelName = sel.value;
+  if (!modelName) return showToast('请选择模型');
+
+  const btn = document.getElementById('mig-extract-btn');
+  btn.disabled = true; btn.textContent = '启动中...';
+
+  try {
+    const data = await api('POST', '/migration/extract', {
+      session_id: _migSession,
+      model_name: modelName,
+    });
+    if (!data.ok) throw new Error(data.error || '启动失败');
+    _migJobId = data.job_id;
+    migShowStep3();
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '开始提取';
+    showToast('❌ ' + e.message);
+  }
+}
+
+function migShowStep3() {
+  const el = document.getElementById('migration-content');
+  _migPollStart = Date.now();
+
+  el.innerHTML = `
+    <div class="card" style="text-align:center;padding:48px 24px">
+      <div class="spinner" style="width:40px;height:40px;border-width:4px;margin:0 auto 20px"></div>
+      <h3 style="color:var(--text-heading);margin-bottom:8px">正在分析聊天记录...</h3>
+      <p style="color:var(--text-soft);font-size:14px;margin-bottom:4px">LLM 正在提取你的记忆和偏好</p>
+      <p style="color:var(--danger);font-size:13px;font-weight:600">⚠️ 请不要关闭或刷新页面</p>
+      <div id="mig-poll-status" style="margin-top:16px;font-size:12px;color:var(--text-soft)">已等待 0 秒...</div>
+    </div>
+  `;
+
+  _migJobPollTimer = setInterval(migPollJob, 3000);
+}
+
+async function migPollJob() {
+  try {
+    const data = await api('GET', '/migration/extract/status?job_id=' + _migJobId);
+    const elapsed = Math.round((Date.now() - _migPollStart) / 1000);
+    const pollEl = document.getElementById('mig-poll-status');
+    if (pollEl) pollEl.textContent = `已等待 ${elapsed} 秒...`;
+
+    if (data.status === 'done') {
+      clearInterval(_migJobPollTimer); _migJobPollTimer = null;
+      _migResult = data.result;
+      migShowStep4();
+    } else if (data.status === 'error') {
+      clearInterval(_migJobPollTimer); _migJobPollTimer = null;
+      migShowError(data.error);
+    }
+  } catch(e) {
+    // network blip — keep polling
+  }
+}
+
+function migShowError(error) {
+  const el = document.getElementById('migration-content');
+  el.innerHTML = `
+    <div class="card" style="text-align:center;padding:32px 24px">
+      <div style="font-size:40px;margin-bottom:12px">❌</div>
+      <h3 style="color:var(--danger);margin-bottom:8px">提取失败</h3>
+      <p style="font-size:13px;color:var(--text-soft);margin-bottom:16px;word-break:break-all">${esc(error || '未知错误')}</p>
+      <div style="display:flex;gap:12px;justify-content:center">
+        <button class="btn btn-primary" onclick="migShowStep2()">重新选择模型</button>
+        <button class="btn btn-ghost" onclick="loadMigration()">重新开始</button>
+      </div>
+    </div>
+  `;
+}
+
+function migShowStep4() {
+  const el = document.getElementById('migration-content');
+  const r = _migResult || {};
+  const items = r.memory_items || [];
+
+  const itemRows = items.map((item, i) => `
+    <tr>
+      <td style="width:36px;text-align:center"><input type="checkbox" checked data-mig-item="${i}"></td>
+      <td><input type="text" value="${esc(item.category||'其他')}" class="form-input" style="padding:4px 8px;font-size:12px" data-mig-cat="${i}"></td>
+      <td><input type="text" value="${esc(item.content||'')}" class="form-input" style="padding:4px 8px;font-size:12px" data-mig-content="${i}"></td>
+      <td style="width:70px">
+        <select class="form-input" style="padding:4px;font-size:12px" data-mig-imp="${i}">
+          <option value="1" ${item.importance==1?'selected':''}>1</option>
+          <option value="2" ${item.importance==2?'selected':''}>2</option>
+          <option value="3" ${item.importance==3?'selected':''}>3</option>
+        </select>
+      </td>
+    </tr>
+  `).join('');
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Soul（AI 人格）</div>
+      <p style="font-size:12px;color:var(--text-soft);margin-bottom:8px">提取到的 AI 性格特征和说话风格，将写入 soul.md（覆盖现有内容）</p>
+      <textarea id="mig-soul" class="form-input" style="min-height:100px;font-size:13px;font-family:inherit;resize:vertical">${esc(r.soul||'')}</textarea>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">User（用户画像）</div>
+      <p style="font-size:12px;color:var(--text-soft);margin-bottom:8px">提取到的用户个人信息，将写入 user.md（覆盖现有内容）</p>
+      <textarea id="mig-user" class="form-input" style="min-height:100px;font-size:13px;font-family:inherit;resize:vertical">${esc(r.user_profile||'')}</textarea>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">Core Memory（核心记忆）</div>
+      <p style="font-size:12px;color:var(--text-soft);margin-bottom:8px">核心事实摘要（覆盖现有 core memory）</p>
+      <textarea id="mig-core" class="form-input" style="min-height:80px;font-size:13px;font-family:inherit;resize:vertical">${esc(r.core_memory||'')}</textarea>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:0">Memory Items（记忆条目）</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" onclick="migToggleAll(true)">全选</button>
+          <button class="btn btn-ghost btn-sm" onclick="migToggleAll(false)">全不选</button>
+        </div>
+      </div>
+      <p style="font-size:12px;color:var(--text-soft);margin-bottom:8px">勾选要导入的条目，可编辑内容、分类和重要性</p>
+      ${items.length ? `
+      <div style="overflow-x:auto">
+        <table class="tbl" style="width:100%">
+          <thead><tr>
+            <th style="width:36px"></th>
+            <th style="width:100px">分类</th>
+            <th>内容</th>
+            <th style="width:70px">重要性</th>
+          </tr></thead>
+          <tbody>${itemRows}</tbody>
+        </table>
+      </div>` : '<p style="font-size:13px;color:var(--text-soft)">未提取到记忆条目</p>'}
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:center">
+      <button class="btn btn-primary" onclick="migApply()" id="mig-apply-btn">确认导入</button>
+      <button class="btn btn-ghost" onclick="loadMigration()">取消</button>
+      <span style="font-size:12px;color:var(--text-soft)">未配置 embedding 时，导入的记忆条目不支持向量搜索</span>
+    </div>
+  `;
+}
+
+function migToggleAll(checked) {
+  document.querySelectorAll('[data-mig-item]').forEach(cb => cb.checked = checked);
+}
+
+async function migApply() {
+  const btn = document.getElementById('mig-apply-btn');
+  btn.disabled = true; btn.textContent = '导入中...';
+
+  // Collect memory items
+  const items = (_migResult?.memory_items || []).map((_, i) => {
+    const cb = document.querySelector(`[data-mig-item="${i}"]`);
+    const cat = document.querySelector(`[data-mig-cat="${i}"]`);
+    const content = document.querySelector(`[data-mig-content="${i}"]`);
+    const imp = document.querySelector(`[data-mig-imp="${i}"]`);
+    return {
+      category: cat?.value || '其他',
+      content: content?.value || '',
+      importance: parseInt(imp?.value || '1'),
+      selected: cb?.checked ?? false,
+    };
+  });
+
+  const payload = {
+    soul: document.getElementById('mig-soul')?.value || '',
+    user_profile: document.getElementById('mig-user')?.value || '',
+    core_memory: document.getElementById('mig-core')?.value || '',
+    memory_items: items,
+  };
+
+  try {
+    const data = await api('POST', '/migration/apply', payload);
+    if (!data.ok) throw new Error(data.error || '导入失败');
+    migShowStep5(data);
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '确认导入';
+    showToast('❌ ' + e.message);
+  }
+}
+
+function migShowStep5(data) {
+  const el = document.getElementById('migration-content');
+  el.innerHTML = `
+    <div class="card" style="text-align:center;padding:40px 24px">
+      <div style="font-size:48px;margin-bottom:12px">✅</div>
+      <h3 style="color:var(--text-heading);margin-bottom:16px">搬家完成！</h3>
+      <div style="text-align:left;max-width:320px;margin:0 auto;font-size:14px;line-height:2">
+        ${data.soul_written ? '✅ Soul（AI 人格）已写入' : '⏭ Soul — 跳过（内容为空）'}<br>
+        ${data.user_written ? '✅ User（用户画像）已写入' : '⏭ User — 跳过（内容为空）'}<br>
+        ${data.core_memory_written ? '✅ Core Memory 已更新' : '⏭ Core Memory — 跳过（内容为空）'}<br>
+        ✅ 记忆条目已导入 <strong>${data.memory_items_imported}</strong> 条
+      </div>
+      <button class="btn btn-primary" style="margin-top:24px" onclick="loadMigration()">开始新的搬家</button>
+    </div>
+  `;
+  // Invalidate memory page cache so next visit refreshes
+  loaded.memory = false;
+  loaded.prompts = false;
 }
 </script>
 </body>

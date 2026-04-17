@@ -11,6 +11,7 @@ ddgs>=8.0.0
 # Admin Portal (web UI for setup & config)
 fastapi>=0.100.0
 uvicorn>=0.20.0
+python-multipart>=0.0.6
 
 # API key encryption at rest
 cryptography>=42.0.0

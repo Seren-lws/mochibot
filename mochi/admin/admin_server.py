@@ -1692,6 +1692,13 @@ if HAS_FASTAPI:
     except ImportError:
         pass
 
+    # ── Chat migration routes (搬家) ────────────────────────────────
+    try:
+        from mochi.admin.migration_routes import register_migration_routes
+        register_migration_routes(app, _verify_token)
+    except ImportError:
+        pass
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Startup
