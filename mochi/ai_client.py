@@ -583,7 +583,26 @@ async def chat(message: IncomingMessage) -> ChatResult:
             log.warning("Conv summary skipped: %s", e)
             return None
 
-    if TOOL_ROUTER_ENABLED:
+    # ── Skill mode: /skilloff skips router + non-core tools ──
+    from mochi.db import get_skill_mode
+    skill_mode_off = get_skill_mode() == "off"
+
+    if skill_mode_off:
+        # Minimal path: core skills only, no prerouter
+        core_names = skill_registry.get_core_skill_names(
+            transport=message.transport)
+        tools = skill_registry.get_tools_by_names(
+            core_names, transport=message.transport)
+
+        core_memory, history, recalled_memories, conv_summary = await asyncio.gather(
+            asyncio.to_thread(get_core_memory, user_id),
+            asyncio.to_thread(get_recent_messages, user_id, 20),
+            asyncio.to_thread(_retrieve_memories_for_turn, text, user_id),
+            _safe_conv_summary(),
+        )
+        habits = []  # not needed in skilloff mode
+
+    elif TOOL_ROUTER_ENABLED:
         from mochi.tool_router import (
             classify_skills, resolve_tier, REQUEST_TOOLS_DEF, validate_escalation,
         )

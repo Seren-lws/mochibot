@@ -1645,3 +1645,34 @@ def delete_skill_config(skill_name: str, key: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+# ── Skill mode (skilloff / skillon) ──────────────────────────────
+
+def get_skill_mode() -> str:
+    """Return current skill mode: ``"on"`` (default) or ``"off"``."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT value FROM skill_config WHERE skill_name = '_system' AND key = 'skill_mode'",
+    ).fetchone()
+    conn.close()
+    return row[0] if row else "on"
+
+
+def set_skill_mode(mode: str) -> None:
+    """Set skill mode.  ``"off"`` persists; anything else clears the row (= on)."""
+    conn = _connect()
+    if mode == "off":
+        now = datetime.now(TZ).isoformat()
+        conn.execute(
+            "INSERT INTO skill_config (skill_name, key, value, updated_at) "
+            "VALUES ('_system', 'skill_mode', 'off', ?) "
+            "ON CONFLICT(skill_name, key) DO UPDATE SET value = 'off', updated_at = ?",
+            (now, now),
+        )
+    else:
+        conn.execute(
+            "DELETE FROM skill_config WHERE skill_name = '_system' AND key = 'skill_mode'",
+        )
+    conn.commit()
+    conn.close()

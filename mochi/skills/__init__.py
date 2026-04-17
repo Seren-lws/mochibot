@@ -266,6 +266,27 @@ def get_always_on_skill_names(transport: str = "") -> list[str]:
     return names
 
 
+def get_core_skill_names(transport: str = "") -> list[str]:
+    """Return names of skills declared ``core: true`` in SKILL.md.
+
+    Used by skilloff mode to keep only essential tools.
+    Respects disabled, config-missing, and transport exclusion gates.
+    """
+    disabled = _get_disabled_skills()
+    names = []
+    for skill in _skills.values():
+        if not skill.core:
+            continue
+        if skill.name in disabled:
+            continue
+        if getattr(skill, "_config_missing", None):
+            continue
+        if transport and transport in skill.exclude_transports:
+            continue
+        names.append(skill.name)
+    return names
+
+
 # Legacy alias
 skill_for_tool = get_tool_skill
 

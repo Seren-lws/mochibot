@@ -359,6 +359,8 @@ class WeixinTransport(Transport):
                 "/notes — 查看笔记\n"
                 "/diary — 查看今日日記\n"
                 "/admin — 管理后台\n"
+                "/skilloff — 闲聊模式（省 token）\n"
+                "/skillon — 恢复完整模式\n"
                 "/restart — 重启 Bot"
             )
             try:
@@ -384,6 +386,38 @@ class WeixinTransport(Transport):
                 await self._weixin_send_message(from_user, f"🔧 管理后台：\n{url}", context_token)
             except Exception as e:
                 log.warning("WeChat: failed to send admin URL: %s", e)
+            return
+
+        # System command: /skilloff (owner only)
+        if text.strip() == "/skilloff":
+            if from_user != self._owner_weixin_id:
+                return
+            from mochi.db import get_skill_mode, set_skill_mode
+            if get_skill_mode() == "off":
+                msg = "已经是闲聊模式啦~"
+            else:
+                set_skill_mode("off")
+                msg = "已切换到闲聊模式 ✦ 只保留记忆功能，省 token~"
+            try:
+                await self._weixin_send_message(from_user, msg, context_token)
+            except Exception as e:
+                log.warning("WeChat: failed to send skilloff ack: %s", e)
+            return
+
+        # System command: /skillon (owner only)
+        if text.strip() == "/skillon":
+            if from_user != self._owner_weixin_id:
+                return
+            from mochi.db import get_skill_mode, set_skill_mode
+            if get_skill_mode() == "on":
+                msg = "已经是完整模式啦~"
+            else:
+                set_skill_mode("on")
+                msg = "已恢复完整模式 ✦ 所有功能重新上线~"
+            try:
+                await self._weixin_send_message(from_user, msg, context_token)
+            except Exception as e:
+                log.warning("WeChat: failed to send skillon ack: %s", e)
             return
 
         # System command: /heartbeat (owner only)

@@ -130,6 +130,8 @@ class TelegramTransport(Transport):
         self._app.add_handler(CommandHandler("diary", self._cmd_diary))
         self._app.add_handler(CommandHandler("restart", self._cmd_restart))
         self._app.add_handler(CommandHandler("admin", self._cmd_admin))
+        self._app.add_handler(CommandHandler("skilloff", self._cmd_skilloff))
+        self._app.add_handler(CommandHandler("skillon", self._cmd_skillon))
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
@@ -190,6 +192,8 @@ class TelegramTransport(Transport):
             "/notes — 查看笔记\n"
             "/diary — 查看今日日記\n"
             "/admin — 管理后台\n"
+            "/skilloff — 闲聊模式（省 token）\n"
+            "/skillon — 恢复完整模式\n"
             "/restart — 重启 Bot"
         )
 
@@ -214,6 +218,26 @@ class TelegramTransport(Transport):
         if ADMIN_TOKEN:
             url += f"?token={ADMIN_TOKEN}"
         await update.message.reply_text(f"🔧 管理后台：\n{url}")
+
+    async def _cmd_skilloff(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not _is_owner(update.effective_user.id):
+            return
+        from mochi.db import get_skill_mode, set_skill_mode
+        if get_skill_mode() == "off":
+            await update.message.reply_text("已经是闲聊模式啦~")
+            return
+        set_skill_mode("off")
+        await update.message.reply_text("已切换到闲聊模式 ✦ 只保留记忆功能，省 token~")
+
+    async def _cmd_skillon(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not _is_owner(update.effective_user.id):
+            return
+        from mochi.db import get_skill_mode, set_skill_mode
+        if get_skill_mode() == "on":
+            await update.message.reply_text("已经是完整模式啦~")
+            return
+        set_skill_mode("on")
+        await update.message.reply_text("已恢复完整模式 ✦ 所有功能重新上线~")
 
     async def _cmd_heartbeat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not _is_owner(update.effective_user.id):
