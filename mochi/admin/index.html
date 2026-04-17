@@ -1560,11 +1560,21 @@ const VENDOR_PRESETS = [
   { vendor: 'custom',    label: '自定义 OpenAI 兼容',  provider: 'openai',       baseUrl: '',                                placeholder: '' },
 ];
 
+const EMB_VENDOR_PRESETS = [
+  { vendor: 'openai',   label: 'OpenAI',            provider: 'openai',       baseUrl: '',                            placeholder: 'text-embedding-3-small' },
+  { vendor: 'deepseek', label: 'DeepSeek',          provider: 'openai',       baseUrl: 'https://api.deepseek.com/v1', placeholder: 'deepseek-embedding' },
+  { vendor: 'ollama',   label: 'Ollama（本地）',     provider: 'ollama',       baseUrl: 'http://localhost:11434/v1',   placeholder: 'nomic-embed-text' },
+  { vendor: 'azure',    label: 'Azure OpenAI',      provider: 'azure_openai', baseUrl: '',                            placeholder: 'text-embedding-3-small' },
+  { vendor: 'custom',   label: '自定义 OpenAI 兼容', provider: 'openai',       baseUrl: '',                            placeholder: '' },
+  { vendor: 'none',     label: '禁用',              provider: 'none',         baseUrl: '',                            placeholder: '' },
+];
+
 function _normalizeUrl(u) { return (u || '').toLowerCase().replace(/\/+$/, '').replace(/\/v\d+$/, ''); }
 
-function resolveVendorLabel(provider, baseUrl) {
+function resolveVendorLabel(provider, baseUrl, presets) {
+  presets = presets || VENDOR_PRESETS;
   const url = _normalizeUrl(baseUrl);
-  for (const p of VENDOR_PRESETS) {
+  for (const p of presets) {
     if (p.provider === provider && p.baseUrl) {
       if (url && url.startsWith(_normalizeUrl(p.baseUrl))) return p.label;
     }
@@ -1572,18 +1582,21 @@ function resolveVendorLabel(provider, baseUrl) {
   if (provider === 'anthropic') return 'Anthropic';
   if (provider === 'azure_openai') return 'Azure OpenAI';
   if (provider === 'openai' && !url) return 'OpenAI';
+  if (provider === 'none') return '禁用';
   return '自定义兼容';
 }
 
-function resolveVendorKey(provider, baseUrl) {
+function resolveVendorKey(provider, baseUrl, presets) {
+  presets = presets || VENDOR_PRESETS;
   const url = _normalizeUrl(baseUrl);
-  for (const p of VENDOR_PRESETS) {
+  for (const p of presets) {
     if (p.provider === provider && p.baseUrl) {
       if (url && url.startsWith(_normalizeUrl(p.baseUrl))) return p.vendor;
     }
   }
   if (provider === 'anthropic') return 'anthropic';
   if (provider === 'azure_openai') return 'azure';
+  if (provider === 'none') return 'none';
   if (provider === 'openai' && !url) return 'openai';
   return 'custom';
 }
@@ -1648,44 +1661,51 @@ async function loadModels() {
         ? '<span class="badge badge-ok" style="margin-left:8px">已配置</span>'
         : '<span class="badge badge-warn" style="margin-left:8px">未配置</span>';
     const embProvider = embCfg.provider || '';
+    const embConfigured = embCfg.configured && !embCfg.disabled;
+    const embVendorKey = embConfigured ? resolveVendorKey(embProvider, embCfg.base_url, EMB_VENDOR_PRESETS) : '';
+    const embVendorLabel = embConfigured ? resolveVendorLabel(embProvider, embCfg.base_url, EMB_VENDOR_PRESETS) : '';
+
     html += `<div class="card"><div class="card-title">Embedding 配置 ${embBadge}</div>`;
-    html += `<div class="form-group"><label class="form-label">服务商</label>
-      <select class="form-input" id="emb-provider" onchange="updateEmbeddingFields()">
-        <option value="openai" ${embProvider==='openai'?'selected':''}>OpenAI（兼容）</option>
-        <option value="azure_openai" ${embProvider==='azure_openai'?'selected':''}>Azure OpenAI</option>
-        <option value="ollama" ${embProvider==='ollama'?'selected':''}>Ollama</option>
-        <option value="none" ${embProvider==='none'||!embProvider?'selected':''}>禁用</option>
-      </select></div>`;
-    // openai fields
+
+    // Summary row (shown when configured)
+    html += `<div id="emb-summary" style="display:${embConfigured ? 'block' : 'none'}">`;
+    html += '<table class="tbl"><tr><th>服务商</th><th>模型</th><th>Key</th><th></th></tr>';
+    html += `<tr>
+      <td><span class="badge badge-info">${esc(embVendorLabel)}</span></td>
+      <td>${esc(embCfg.model || '（默认）')}</td>
+      <td>${embCfg.api_key_set ? '<span class="badge badge-ok">已设置</span>' : '<span class="badge badge-warn">未设置</span>'}</td>
+      <td style="text-align:right">
+        <button class="btn btn-ghost btn-sm" onclick="openEmbeddingEdit()">编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="testEmbeddingSummary(this)">测试</button>
+        <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="deleteEmbeddingConfig()">删除</button>
+      </td></tr>`;
+    html += '</table></div>';
+
+    // Edit form (shown when not configured, or when editing)
+    html += `<div id="emb-form" style="display:${embConfigured ? 'none' : 'block'}">`;
     const apiKeyBadge = embCfg.api_key_set ? ' <span class="badge badge-ok" style="margin-left:6px">已设置</span>' : '';
-    html += '<div id="emb-fields-openai" style="display:none">';
-    html += '<div class="form-group"><label class="form-label">API Key' + apiKeyBadge + '</label>';
-    html += '<input class="form-input" id="emb-apikey" type="password" autocomplete="new-password" placeholder="' + (embCfg.api_key_set ? '（不修改）' : 'sk-...') + '"></div>';
-    html += '<div class="form-group"><label class="form-label">模型</label>';
-    html += '<input class="form-input" id="emb-model" placeholder="text-embedding-3-small" value="' + esc(embCfg.model) + '"></div>';
-    html += '<div class="form-group"><label class="form-label">Base URL（可选）</label>';
-    html += '<input class="form-input" id="emb-baseurl" placeholder="留空使用默认" value="' + esc(embCfg.base_url) + '"></div>';
-    html += '</div>';
-    // azure fields
-    html += '<div id="emb-fields-azure" style="display:none">';
-    html += '<div class="form-group"><label class="form-label">API Key' + apiKeyBadge + '</label>';
-    html += '<input class="form-input" id="emb-azure-apikey" type="password" autocomplete="new-password" placeholder="' + (embCfg.api_key_set ? '（不修改）' : 'API Key') + '"></div>';
-    html += `<div class="form-group"><label class="form-label">Endpoint URL</label>
-        <input class="form-input" id="emb-azure-baseurl" placeholder="https://xxx.openai.azure.com/" value="${esc(embCfg.base_url)}"></div>
-      <div class="form-group"><label class="form-label">Deployment</label>
-        <input class="form-input" id="emb-azure-deployment" placeholder="text-embedding-3-small" value="${esc(embCfg.azure_deployment)}"></div>`;
-    html += '</div>';
-    // ollama fields
-    html += `<div id="emb-fields-ollama" style="display:none">
+    // Vendor selector
+    html += `<div class="form-group"><label class="form-label">服务商</label>
+      <select class="form-input" id="emb-vendor" onchange="onEmbVendorChange()">
+        ${EMB_VENDOR_PRESETS.map(p => `<option value="${p.vendor}" ${(embConfigured ? embVendorKey : (embProvider === 'none' || !embProvider ? 'none' : '')) === p.vendor ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}
+      </select></div>`;
+    // Unified fields
+    html += `<div id="emb-fields-main" style="display:none">
+      <div class="form-group"><label class="form-label">API Key${apiKeyBadge}</label>
+        <input class="form-input" id="emb-apikey" type="password" autocomplete="new-password" placeholder="${embCfg.api_key_set ? '（不修改）' : 'sk-...'}"></div>
       <div class="form-group"><label class="form-label">模型</label>
-        <input class="form-input" id="emb-ollama-model" placeholder="nomic-embed-text" value="${esc(embCfg.model)}"></div>
-      <div class="form-group"><label class="form-label">Base URL</label>
-        <input class="form-input" id="emb-ollama-baseurl" placeholder="http://localhost:11434" value="${esc(embCfg.base_url)}"></div>
+        <input class="form-input" id="emb-model" placeholder="" value="${esc(embCfg.model)}"></div>
+      <div class="form-group"><label class="form-label">Base URL（可选）</label>
+        <input class="form-input" id="emb-baseurl" placeholder="留空使用默认" value="${esc(embCfg.base_url)}"></div>
+      <div id="emb-azure-extra" style="display:none">
+        <div class="form-group"><label class="form-label">Azure Deployment</label>
+          <input class="form-input" id="emb-azure-deployment" placeholder="text-embedding-3-small" value="${esc(embCfg.azure_deployment)}"></div>
+      </div>
     </div>`;
-    // none
+    // "none" message
     html += '<div id="emb-fields-none" style="display:none"><p style="color:var(--text-soft);font-size:13px">Embedding 已禁用，向量记忆搜索不可用。</p></div>';
     // advanced
-    html += `<div style="margin-top:8px;cursor:pointer;font-size:13px;color:var(--text-soft);user-select:none" onclick="toggleEmbeddingAdvanced()">
+    html += `<div id="emb-advanced-toggle" style="margin-top:8px;cursor:pointer;font-size:13px;color:var(--text-soft);user-select:none;display:none" onclick="toggleEmbeddingAdvanced()">
       <span id="emb-adv-arrow">▸</span> 高级设置</div>`;
     html += `<div id="emb-advanced" style="display:none;margin-top:8px">
       <div class="form-group"><label class="form-label">缓存最大条数</label>
@@ -1693,10 +1713,16 @@ async function loadModels() {
       <div class="form-group"><label class="form-label">缓存 TTL（秒）</label>
         <input class="form-input" id="emb-cache-ttl" type="number" value="${embCfg.cache_ttl_s}" placeholder="300"></div>
     </div>`;
-    // save button
-    html += '<div style="margin-top:12px"><button class="btn btn-primary" onclick="saveEmbeddingConfig()">保存</button> <button class="btn btn-ghost" onclick="testEmbedding(this)">🔌 测试连接</button> <span style="font-size:11px;color:var(--text-soft)">保存到 .env（重启生效）</span></div>';
+    // save/cancel buttons
+    html += `<div style="margin-top:12px">
+      <button class="btn btn-primary" onclick="saveEmbeddingConfig()">保存</button>
+      <button class="btn btn-ghost" onclick="testEmbedding(this)">🔌 测试连接</button>
+      ${embConfigured ? '<button class="btn btn-ghost" onclick="closeEmbeddingEdit()">取消</button>' : ''}
+      <span style="font-size:11px;color:var(--text-soft)">保存到 .env（重启生效）</span>
+    </div>`;
     html += '<div id="emb-test-result" style="font-size:13px;margin-top:8px"></div>';
-    html += '</div>';
+    html += '</div>'; // end emb-form
+    html += '</div>'; // end card
 
     el.innerHTML = html;
     updateEmbeddingFields();
@@ -2018,18 +2044,92 @@ async function assignTier(tier, modelName) {
 // ── Embedding Config helpers ──────────────
 
 let _embApiKeySet = false;
+let _lastAutoEmbBaseUrl = '';
 
 function updateEmbeddingFields() {
-  const p = document.getElementById('emb-provider');
-  if (!p) return;
-  const v = p.value;
-  ['openai','azure','ollama','none'].forEach(id => {
-    const el = document.getElementById('emb-fields-' + id);
-    if (el) el.style.display = 'none';
-  });
-  const mapping = {openai:'openai', azure_openai:'azure', ollama:'ollama', none:'none'};
-  const target = document.getElementById('emb-fields-' + (mapping[v] || 'none'));
-  if (target) target.style.display = 'block';
+  const sel = document.getElementById('emb-vendor');
+  if (!sel) return;
+  const v = sel.value;
+  const mainFields = document.getElementById('emb-fields-main');
+  const noneFields = document.getElementById('emb-fields-none');
+  const azureExtra = document.getElementById('emb-azure-extra');
+  const advToggle = document.getElementById('emb-advanced-toggle');
+
+  if (v === 'none') {
+    if (mainFields) mainFields.style.display = 'none';
+    if (noneFields) noneFields.style.display = 'block';
+    if (advToggle) advToggle.style.display = 'none';
+  } else {
+    if (mainFields) mainFields.style.display = 'block';
+    if (noneFields) noneFields.style.display = 'none';
+    if (azureExtra) azureExtra.style.display = (v === 'azure') ? 'block' : 'none';
+    if (advToggle) advToggle.style.display = 'block';
+  }
+}
+
+function onEmbVendorChange() {
+  const sel = document.getElementById('emb-vendor');
+  const preset = EMB_VENDOR_PRESETS.find(p => p.vendor === sel.value);
+  if (!preset) return;
+  const urlEl = document.getElementById('emb-baseurl');
+  const modelEl = document.getElementById('emb-model');
+  if (urlEl && (!urlEl.value || urlEl.value === _lastAutoEmbBaseUrl)) {
+    urlEl.value = preset.baseUrl;
+    _lastAutoEmbBaseUrl = preset.baseUrl;
+  }
+  if (modelEl && preset.placeholder) modelEl.placeholder = '例如 ' + preset.placeholder;
+  else if (modelEl) modelEl.placeholder = '';
+  updateEmbeddingFields();
+}
+
+function openEmbeddingEdit() {
+  const summary = document.getElementById('emb-summary');
+  const form = document.getElementById('emb-form');
+  if (summary) summary.style.display = 'none';
+  if (form) form.style.display = 'block';
+  updateEmbeddingFields();
+}
+
+function closeEmbeddingEdit() {
+  const summary = document.getElementById('emb-summary');
+  const form = document.getElementById('emb-form');
+  if (summary) summary.style.display = 'block';
+  if (form) form.style.display = 'none';
+}
+
+async function testEmbeddingSummary(btn) {
+  const orig = btn.textContent;
+  btn.textContent = '测试中...';
+  btn.disabled = true;
+  try {
+    const r = await api('POST', '/embedding/test');
+    if (r.ok) {
+      btn.textContent = '✅ 成功';
+      btn.style.color = 'var(--success)';
+      showToast('✅ Embedding 测试通过' + (r.latency_ms ? '（延迟 '+r.latency_ms+'ms）' : ''));
+      setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 3000);
+    } else {
+      btn.textContent = '❌ 失败';
+      btn.style.color = 'var(--danger)';
+      showToast('❌ Embedding 测试失败: ' + (r.error||'未知错误'));
+      setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 3000);
+    }
+  } catch(e) {
+    btn.textContent = '❌ 失败';
+    btn.style.color = 'var(--danger)';
+    showToast('❌ ' + e.message);
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 3000);
+  } finally { btn.disabled = false; }
+}
+
+async function deleteEmbeddingConfig() {
+  if (!confirm('确定禁用 Embedding？这会清除 .env 中的 Embedding 配置。')) return;
+  try {
+    await api('PUT', '/env', {EMBEDDING_PROVIDER: 'none', EMBEDDING_API_KEY: '', EMBEDDING_MODEL: '', EMBEDDING_BASE_URL: '', AZURE_EMBEDDING_DEPLOYMENT: ''});
+    showToast('Embedding 已禁用');
+    loaded.models = false;
+    loadModels();
+  } catch(e) { showToast('错误: ' + e.message); }
 }
 
 function toggleEmbeddingAdvanced() {
@@ -2042,28 +2142,22 @@ function toggleEmbeddingAdvanced() {
 }
 
 async function saveEmbeddingConfig(skipReload) {
-  const provider = document.getElementById('emb-provider').value;
-  const body = {EMBEDDING_PROVIDER: provider};
+  const vendorSel = document.getElementById('emb-vendor');
+  const vendor = vendorSel ? vendorSel.value : 'none';
+  const preset = EMB_VENDOR_PRESETS.find(p => p.vendor === vendor) || EMB_VENDOR_PRESETS[EMB_VENDOR_PRESETS.length - 1];
+  const body = {EMBEDDING_PROVIDER: preset.provider};
 
-  if (provider === 'openai') {
-    const apiKey = document.getElementById('emb-apikey').value.trim();
-    if (apiKey) body.EMBEDDING_API_KEY = apiKey;
-    const model = document.getElementById('emb-model').value.trim();
-    if (model) body.EMBEDDING_MODEL = model;
-    const baseUrl = document.getElementById('emb-baseurl').value.trim();
-    if (baseUrl) body.EMBEDDING_BASE_URL = baseUrl;
-  } else if (provider === 'azure_openai') {
-    const apiKey = document.getElementById('emb-azure-apikey').value.trim();
-    if (apiKey) body.EMBEDDING_API_KEY = apiKey;
-    const baseUrl = document.getElementById('emb-azure-baseurl').value.trim();
-    if (baseUrl) body.EMBEDDING_BASE_URL = baseUrl;
-    const deployment = document.getElementById('emb-azure-deployment').value.trim();
-    if (deployment) body.AZURE_EMBEDDING_DEPLOYMENT = deployment;
-  } else if (provider === 'ollama') {
-    const model = document.getElementById('emb-ollama-model').value.trim();
-    if (model) body.EMBEDDING_MODEL = model;
-    const baseUrl = document.getElementById('emb-ollama-baseurl').value.trim();
-    if (baseUrl) body.EMBEDDING_BASE_URL = baseUrl;
+  if (vendor !== 'none') {
+    const apiKey = (document.getElementById('emb-apikey') || {}).value || '';
+    if (apiKey.trim()) body.EMBEDDING_API_KEY = apiKey.trim();
+    const model = (document.getElementById('emb-model') || {}).value || '';
+    if (model.trim()) body.EMBEDDING_MODEL = model.trim();
+    const baseUrl = (document.getElementById('emb-baseurl') || {}).value || '';
+    if (baseUrl.trim()) body.EMBEDDING_BASE_URL = baseUrl.trim();
+    if (vendor === 'azure') {
+      const deployment = (document.getElementById('emb-azure-deployment') || {}).value || '';
+      if (deployment.trim()) body.AZURE_EMBEDDING_DEPLOYMENT = deployment.trim();
+    }
   }
 
   // Cache settings (always send if filled)
