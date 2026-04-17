@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import threading
+from difflib import SequenceMatcher
 import time
 from datetime import datetime, timezone
 import uuid
@@ -54,6 +55,8 @@ _EXTRACTION_PROMPT_BASE = """\
 请整理你对这段关系的记忆。core_memory 和 memory_items 用"我们"叙事，soul 用"你是"格式（因为会直接用作系统提示词），user_profile 用对方名字。
 
 四个字段各有分工，严禁重复。同一条信息只放在最合适的一个字段里。
+memory_items 内部也严禁语义重复——同一件事不管出现在多少个对话中，只保留一条最详细的版本。
+如果用不同措辞描述了同一事实（如"喜欢无糖拿铁"和"每天早上必须喝一杯无糖拿铁"），只保留信息量最大的那条。
 
 1. soul — 你的人格定义，直接作为系统提示词使用。用"你"开头描述。
    用 markdown 分栏格式，按以下结构组织：
@@ -81,8 +84,11 @@ _EXTRACTION_PROMPT_BASE = """\
 
 去重规则：
 - user_profile 里写了的身份信息，不要在 memory_items 里重复
-- core_memory 里写了的核心事实，不要在 memory_items 里重复
+- core_memory 里写了的核心事实，不要在 memory_items 里重复（core_memory 是摘要，memory_items 里不要有更详细版本）
 - 如果一条信息既可以放 user_profile 又可以放 memory_items，细节偏好放 memory_items，身份概况放 user_profile
+- memory_items 内部绝对不能有语义重复。写完后自查：如果两条可以合并成一条，就合并
+- 同一事实不要因为分类不同就重复（如"养了一只橘猫"不能同时出现在"事实"和"宠物"分类中）
+- 事件的经过和概括不要同时出现（如争吵和好的经历，在 core_memory 概括后，memory_items 里只保留补充细节，不要重述）
 
 请只返回 JSON，不要有任何其他文字或 markdown 标记。格式：
 {{"soul":"# 你是谁\\n你叫mochi，是小林的女朋友。\\n\\n# 性格\\n- 温柔体贴\\n- 偶尔撒娇\\n\\n# 说话方式\\n- 语气亲切，常用语气词","user_profile":"user叫小林\\n- 她在东京工作","core_memory":"- 我们是恋人","memory_items":[{{"category":"偏好","content":"喜欢无糖拿铁","importance":2}},{{"category":"经历","content":"[2024-03-15] 小林带团子去打疫苗，团子抓了医生一爪子","importance":1}}]}}
@@ -372,6 +378,10 @@ def _run_extract(job_id: str, session_id: str, model_name: str,
         # Parse JSON — handle possible markdown fences
         parsed = _parse_llm_json(content)
 
+        # Post-process: deduplicate memory items
+        if "memory_items" in parsed and isinstance(parsed["memory_items"], list):
+            parsed["memory_items"] = _dedup_memory_items(parsed["memory_items"])
+
         _jobs[job_id]["status"] = "done"
         _jobs[job_id]["result"] = parsed
         log.info("Migration extraction job %s completed", job_id)
@@ -407,6 +417,59 @@ def _parse_llm_json(text: str) -> dict:
             pass
 
     raise ValueError("LLM 返回的内容无法解析为 JSON，请重试或换用其他模型")
+
+
+def _dedup_memory_items(items: list[dict]) -> list[dict]:
+    """Remove semantically duplicate memory items using text similarity.
+
+    Keeps the longer (more detailed) item when two items are similar.
+    """
+    if not items:
+        return items
+
+    def _normalize(text: str) -> str:
+        """Strip date prefixes and whitespace for comparison."""
+        text = re.sub(r"^\[[\d\-]+\]\s*", "", text.strip())
+        return text
+
+    def _keywords(text: str) -> set[str]:
+        """Extract content characters for overlap check."""
+        # Remove punctuation and whitespace, keep meaningful chars
+        return set(re.sub(r"[，。、！？「」\s\d\[\]\-（）\(\)]", "", text))
+
+    # Mark items to drop
+    drop = set()
+    for i in range(len(items)):
+        if i in drop:
+            continue
+        ci = _normalize(items[i].get("content", ""))
+        ki = _keywords(ci)
+        for j in range(i + 1, len(items)):
+            if j in drop:
+                continue
+            cj = _normalize(items[j].get("content", ""))
+            kj = _keywords(cj)
+
+            # Substring containment
+            if ci in cj or cj in ci:
+                drop.add(i if len(ci) <= len(cj) else j)
+                continue
+
+            # Bigram overlap: if the smaller set is mostly covered by the larger
+            smaller, larger = (ki, kj) if len(ki) <= len(kj) else (kj, ki)
+            if smaller and len(smaller & larger) / len(smaller) > 0.65:
+                drop.add(i if len(ci) <= len(cj) else j)
+                continue
+
+            # SequenceMatcher for remaining cases
+            ratio = SequenceMatcher(None, ci, cj).ratio()
+            if ratio > 0.6:
+                drop.add(i if len(ci) <= len(cj) else j)
+
+    kept = [item for idx, item in enumerate(items) if idx not in drop]
+    if drop:
+        log.info("Dedup removed %d/%d memory items", len(drop), len(items))
+    return kept
 
 
 def get_job_status(job_id: str) -> dict:

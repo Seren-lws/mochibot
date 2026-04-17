@@ -14,6 +14,7 @@ from mochi.admin.migration import (
     preprocess,
     _parse_llm_json,
     _code_density,
+    _dedup_memory_items,
     estimate_context_fit,
     _sessions,
 )
@@ -206,3 +207,52 @@ class TestEstimateContextFit:
         r = estimate_context_fit("some-custom-model", 100000)
         assert r["fits"] is True
         assert r["context_window"] is None
+
+
+# ── _dedup_memory_items ──────────────────────────────────────────────────
+
+class TestDedupMemoryItems:
+
+    def test_empty(self):
+        assert _dedup_memory_items([]) == []
+
+    def test_no_dupes(self):
+        items = [
+            {"category": "偏好", "content": "喜欢喝咖啡", "importance": 2},
+            {"category": "事实", "content": "养了一只猫", "importance": 3},
+        ]
+        assert len(_dedup_memory_items(items)) == 2
+
+    def test_substring_dedup(self):
+        items = [
+            {"category": "偏好", "content": "喜欢喝无糖拿铁", "importance": 2},
+            {"category": "偏好", "content": "每天早上必须喝一杯无糖拿铁才能开始工作，因为乳糖不耐受会用燕麦奶", "importance": 3},
+        ]
+        result = _dedup_memory_items(items)
+        assert len(result) == 1
+        assert "每天早上" in result[0]["content"]
+
+    def test_similar_content_dedup(self):
+        items = [
+            {"category": "偏好", "content": "喜欢看动漫和打游戏，最喜欢《葬送的芙莉莲》", "importance": 2},
+            {"category": "偏好", "content": "喜欢看动漫和打游戏，动漫喜欢奇幻冒险类和日常治愈类，最喜欢《葬送的芙莉莲》；最近在玩塞尔达", "importance": 2},
+        ]
+        result = _dedup_memory_items(items)
+        assert len(result) == 1
+        assert "塞尔达" in result[0]["content"]
+
+    def test_date_prefix_ignored(self):
+        items = [
+            {"category": "情感", "content": "小林在东京感到孤独，觉得没有人了解他", "importance": 3},
+            {"category": "情感", "content": "[2024-01-18] 小林在东京感到孤独，觉得没有人了解他", "importance": 3},
+        ]
+        result = _dedup_memory_items(items)
+        assert len(result) == 1
+
+    def test_different_category_same_content(self):
+        items = [
+            {"category": "事实", "content": "养了一只三岁的橘猫，名叫团子，特别粘人", "importance": 3},
+            {"category": "宠物", "content": "养了一只三岁的橘猫叫团子，性格粘人", "importance": 2},
+        ]
+        result = _dedup_memory_items(items)
+        assert len(result) == 1
