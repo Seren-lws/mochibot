@@ -822,6 +822,65 @@ async def _act(result: dict, user_id: int) -> None:
             except Exception as e:
                 log.warning("Diary update failed: %s", e)
 
+        elif action_type == "manage_note":
+            note_action = action.get("action", "")
+            raw_nid = action.get("note_id")
+            if note_action == "remove" and raw_nid is not None:
+                try:
+                    from mochi.skills import skill_for_tool, get_skill
+                    from mochi.skills.base import SkillContext
+                    sname = skill_for_tool("manage_note")
+                    skill = get_skill(sname) if sname else None
+                    if skill:
+                        ctx = SkillContext(
+                            trigger="heartbeat", user_id=user_id,
+                            tool_name="manage_note",
+                            args={"action": "remove", "note_id": int(raw_nid)},
+                        )
+                        sr = await skill.run(ctx)
+                        log_heartbeat(_state, "manage_note",
+                                      f"remove #{raw_nid}: {sr.output[:80]}")
+                    else:
+                        log.warning("manage_note: note skill not found")
+                except Exception as e:
+                    log.error("manage_note error: %s", e)
+            else:
+                log.warning("manage_note: invalid action=%r or note_id=%r",
+                            note_action, raw_nid)
+
+        elif action_type == "run_skill":
+            skill_name = action.get("skill", "")
+            skill_args = action.get("args", {})
+            try:
+                from mochi.skills import get_skill
+                from mochi.skills.base import SkillContext
+                skill = get_skill(skill_name)
+                if not skill:
+                    log.warning("run_skill: skill %r not found", skill_name)
+                else:
+                    ctx = SkillContext(
+                        trigger="heartbeat", user_id=user_id, args=skill_args,
+                    )
+                    sr = await skill.run(ctx)
+                    if sr.success:
+                        for sa in sr.actions:
+                            if sa.get("type") == "message":
+                                notify_actions.append({
+                                    "type": "notify",
+                                    "topic": "skill_result",
+                                    "summary": sa.get("content", "")[:200],
+                                })
+                        log_heartbeat(_state, f"run_skill:{skill_name}",
+                                      sr.output[:80])
+                    else:
+                        log.warning("run_skill(%s) failed: %s",
+                                    skill_name, sr.output[:100])
+                        log_heartbeat(_state, f"run_skill:{skill_name}",
+                                      f"FAIL: {sr.output[:80]}")
+            except Exception as e:
+                log.error("run_skill(%s) error: %s", skill_name, e,
+                          exc_info=True)
+
         else:
             log.warning("Unknown action type: %s", action_type)
             log_heartbeat(_state, "unknown", str(action)[:200])

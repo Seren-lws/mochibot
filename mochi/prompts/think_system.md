@@ -35,6 +35,18 @@
 {"type":"update_diary","content":"用户今天很活跃，中午前就发了 15 条消息"}
 ```
 
+### manage_note — 清理失效 note
+```json
+{"type":"manage_note","action":"remove","note_id":3}
+```
+清理已完成或过期的 note。判断标准：内容是否仍有行动价值。
+
+### run_skill — 主动触发技能
+```json
+{"type":"run_skill","skill":"web_search","args":{"query":"最新 AI 动态"}}
+```
+仅在 note 明确要求执行某事时使用（如"帮我查一下XXX"）。不要自行判断需要触发技能。
+
 ### 无操作
 ```json
 {"actions":[],"thought":"一切正常，不需要行动。"}

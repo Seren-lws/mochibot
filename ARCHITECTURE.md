@@ -36,7 +36,8 @@
 │  Autonomous cycle: Observe → Think → Act       │
 │  Observe: collect from observers               │
 │  Think: LLM evaluates observations             │
-│  Act: notify / save_memory / update_diary      │
+│  Act: notify / save_memory / update_diary /     │
+│       manage_note / run_skill                   │
 ├─ 5. Memory ───────────────────────────────────┤
 │  Core Memory — always injected (~800 tok)      │
 │  Memory Items — semantic search (embeddings)   │
@@ -366,7 +367,7 @@ Delta Detection (0 LLM calls)
 Think (on delta or fallback, 1 LLM call)
   → Receives structured text observation (not raw JSON)
   → Reads Today Status panel for habit progress, timing context
-  → Decides: notify (with topic/urgency) | update_diary | nothing
+  → Decides: notify (with topic/urgency) | update_diary | manage_note | run_skill | nothing
   → ⚡Important habits overdue → MUST notify (topic=habit_nudge, urgency=high)
   → Rate-limited: max N/day, cooldown between messages
 
