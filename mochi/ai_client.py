@@ -293,9 +293,6 @@ async def _generate_summary(
 def _expand_history(history: list[dict]) -> list[dict]:
     """Expand conversation history into API-native messages.
 
-    Each message is prefixed with its original timestamp so the LLM can
-    distinguish "what was said then" from "what time is it now".
-
     For assistant messages with tool_history, reconstructs the tool call
     sequence so the LLM structurally recognizes prior tool usage:
       1. assistant message with tool_calls (content=None)
@@ -307,12 +304,6 @@ def _expand_history(history: list[dict]) -> list[dict]:
         role = msg.get("role")
         content = msg.get("content")
         tool_history_raw = msg.get("tool_history")
-
-        # Prefix content with timestamp so LLM sees when each message was sent
-        created_at = msg.get("created_at", "")
-        if created_at and content:
-            ts = created_at[:16]  # "2026-04-16T18:28"
-            content = f"[{ts}] {content}"
 
         if role == "assistant" and tool_history_raw:
             try:
@@ -504,6 +495,29 @@ def _build_system_prompt(user_id: int, usage_rules: str = "",
 
     # Current time — system block 末尾，利用 block 内 recency bias
     parts.append(f"当前时间：{now_str}")
+
+    # Silence duration — how long since last user message
+    from mochi.db import get_last_user_message_time
+    last_msg_time = get_last_user_message_time(user_id)
+    if last_msg_time:
+        try:
+            last_dt = datetime.fromisoformat(last_msg_time)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=tz)
+            silence_mins = int((now - last_dt).total_seconds() / 60)
+            if silence_mins < 2:
+                silence_label = "刚刚"
+            elif silence_mins < 60:
+                silence_label = f"{silence_mins}分钟前"
+            else:
+                silence_hours = silence_mins // 60
+                if silence_hours < 24:
+                    silence_label = f"{silence_hours}小时前"
+                else:
+                    silence_label = f"{silence_hours // 24}天前"
+            parts.append(f"用户上次发消息：{silence_label}")
+        except (ValueError, TypeError):
+            pass
 
     if not parts:
         raise RuntimeError("System prompt is empty — check prompts/ directory and prompt_loader")
