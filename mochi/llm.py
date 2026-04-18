@@ -400,7 +400,7 @@ class GeminiProvider(LLMProvider):
 
     def __init__(self, api_key: str, model: str):
         from google import genai
-        self._model = model
+        self._model = model if model.startswith("models/") else f"models/{model}"
         self._client = genai.Client(api_key=api_key)
 
     def provider_name(self) -> str:

@@ -87,7 +87,7 @@ class _GeminiEmbedAdapter:
     def __init__(self, api_key: str, model: str):
         from google import genai
         self._client = genai.Client(api_key=api_key)
-        self._model = model
+        self._model = model if model.startswith("models/") else f"models/{model}"
         self.embeddings = self  # so client.embeddings.create() works
 
     def create(self, model: str = "", input: str | list[str] = "") -> _GeminiEmbedResponse:
