@@ -290,7 +290,7 @@ select.form-input { cursor:pointer; }
     <h3 id="model-modal-title">添加模型</h3>
     <div class="form-group"><label class="form-label">名称</label><input class="form-input" id="mm-name" placeholder="例如 my-gpt4o"></div>
     <div class="form-group"><label class="form-label">服务商</label>
-      <select class="form-input" id="mm-vendor" onchange="onVendorChange()"><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="ollama">Ollama（本地）</option><option value="azure">Azure OpenAI</option><option value="anthropic">Anthropic</option><option value="custom">自定义 OpenAI 兼容</option></select>
+      <select class="form-input" id="mm-vendor" onchange="onVendorChange()"><option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option><option value="ollama">Ollama（本地）</option><option value="azure">Azure OpenAI</option><option value="anthropic">Anthropic</option><option value="gemini">Google Gemini</option><option value="custom">自定义 OpenAI 兼容</option></select>
     </div>
     <div class="form-group"><label class="form-label">模型</label><input class="form-input" id="mm-model" placeholder="例如 gpt-4o"></div>
     <div class="form-group"><label class="form-label">API Key</label><input class="form-input" id="mm-apikey" type="password" autocomplete="new-password" placeholder="sk-..."></div>
@@ -1566,6 +1566,7 @@ const VENDOR_PRESETS = [
   { vendor: 'ollama',    label: 'Ollama（本地）',      provider: 'openai',       baseUrl: 'http://localhost:11434/v1',        placeholder: 'llama3' },
   { vendor: 'azure',     label: 'Azure OpenAI',       provider: 'azure_openai', baseUrl: '',                                placeholder: 'gpt-4o' },
   { vendor: 'anthropic', label: 'Anthropic',          provider: 'anthropic',    baseUrl: '',                                placeholder: 'claude-sonnet-4-20250514' },
+  { vendor: 'gemini',    label: 'Google Gemini',       provider: 'gemini',       baseUrl: '',                                placeholder: 'gemini-2.0-flash' },
   { vendor: 'custom',    label: '自定义 OpenAI 兼容',  provider: 'openai',       baseUrl: '',                                placeholder: '' },
 ];
 
@@ -1574,6 +1575,7 @@ const EMB_VENDOR_PRESETS = [
   { vendor: 'deepseek', label: 'DeepSeek',          provider: 'openai',       baseUrl: 'https://api.deepseek.com/v1', placeholder: 'deepseek-embedding' },
   { vendor: 'ollama',   label: 'Ollama（本地）',     provider: 'ollama',       baseUrl: 'http://localhost:11434/v1',   placeholder: 'nomic-embed-text' },
   { vendor: 'azure',    label: 'Azure OpenAI',      provider: 'azure_openai', baseUrl: '',                            placeholder: 'text-embedding-3-small' },
+  { vendor: 'gemini',   label: 'Google Gemini',     provider: 'gemini',       baseUrl: '',                            placeholder: 'gemini-embedding-001' },
   { vendor: 'custom',   label: '自定义 OpenAI 兼容', provider: 'openai',       baseUrl: '',                            placeholder: '' },
   { vendor: 'none',     label: '禁用',              provider: 'none',         baseUrl: '',                            placeholder: '' },
 ];
@@ -1589,6 +1591,7 @@ function resolveVendorLabel(provider, baseUrl, presets) {
     }
   }
   if (provider === 'anthropic') return 'Anthropic';
+  if (provider === 'gemini') return 'Google Gemini';
   if (provider === 'azure_openai') return 'Azure OpenAI';
   if (provider === 'openai' && !url) return 'OpenAI';
   if (provider === 'none') return '禁用';
@@ -1604,6 +1607,7 @@ function resolveVendorKey(provider, baseUrl, presets) {
     }
   }
   if (provider === 'anthropic') return 'anthropic';
+  if (provider === 'gemini') return 'gemini';
   if (provider === 'azure_openai') return 'azure';
   if (provider === 'none') return 'none';
   if (provider === 'openai' && !url) return 'openai';

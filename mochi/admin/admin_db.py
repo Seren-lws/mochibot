@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 TZ = timezone(timedelta(hours=TIMEZONE_OFFSET_HOURS))
 
 _VALID_TIERS = frozenset({"lite", "chat", "deep"})
-_VALID_PROVIDERS = frozenset({"openai", "azure_openai", "anthropic"})
+_VALID_PROVIDERS = frozenset({"openai", "azure_openai", "anthropic", "gemini"})
 
 __KEEP__ = "__KEEP__"
 

@@ -62,6 +62,49 @@ class _TTLCache:
 
 
 # ---------------------------------------------------------------------------
+# Gemini embedding adapter (duck-types OpenAI embeddings.create interface)
+# ---------------------------------------------------------------------------
+
+class _GeminiEmbedData:
+    """Duck-type for OpenAI embedding response data item."""
+    __slots__ = ("embedding", "index")
+    def __init__(self, embedding: list[float], index: int):
+        self.embedding = embedding
+        self.index = index
+
+class _GeminiEmbedResponse:
+    """Duck-type for OpenAI embedding response."""
+    __slots__ = ("data",)
+    def __init__(self, data: list[_GeminiEmbedData]):
+        self.data = data
+
+class _GeminiEmbedAdapter:
+    """Wraps google.genai.Client to match OpenAI's embeddings.create() interface.
+
+    This lets ModelPool.embed() / embed_batch() call .embeddings.create()
+    without any code changes — the adapter translates to Gemini's API.
+    """
+    def __init__(self, api_key: str, model: str):
+        from google import genai
+        self._client = genai.Client(api_key=api_key)
+        self._model = model
+        self.embeddings = self  # so client.embeddings.create() works
+
+    def create(self, model: str = "", input: str | list[str] = "") -> _GeminiEmbedResponse:
+        """Mimic openai.embeddings.create(model=..., input=...)."""
+        texts = [input] if isinstance(input, str) else list(input)
+        result = self._client.models.embed_content(
+            model=model or self._model,
+            contents=texts,
+        )
+        data = [
+            _GeminiEmbedData(embedding=emb.values, index=i)
+            for i, emb in enumerate(result.embeddings)
+        ]
+        return _GeminiEmbedResponse(data=data)
+
+
+# ---------------------------------------------------------------------------
 # Embedding provider resolution + factory
 # ---------------------------------------------------------------------------
 
@@ -102,6 +145,14 @@ def _resolve_embedding_config() -> tuple[str, str, str, str]:
             EMBEDDING_BASE_URL or "http://localhost:11434/v1",
         )
 
+    if provider == "gemini":
+        return (
+            "gemini",
+            EMBEDDING_API_KEY,
+            EMBEDDING_MODEL or "gemini-embedding-001",
+            "",
+        )
+
     if provider:
         log.warning("Unknown EMBEDDING_PROVIDER '%s', disabling embedding", provider)
         return ("none", "", "", "")
@@ -126,6 +177,9 @@ def _make_embed_client(provider: str, api_key: str, model: str,
     """
     if provider == "none" or not provider:
         return None, ""
+
+    if provider == "gemini":
+        return _GeminiEmbedAdapter(api_key, model), model
 
     if provider == "azure_openai":
         from openai import AzureOpenAI

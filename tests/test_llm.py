@@ -1,9 +1,9 @@
-"""Tests for Anthropic message format conversion in LLM layer."""
+"""Tests for LLM provider format conversion (Anthropic + Gemini)."""
 
 import json
 import pytest
 from unittest.mock import MagicMock, patch
-from mochi.llm import AnthropicProvider, OpenAIProvider, _OpenAICompatChat
+from mochi.llm import AnthropicProvider, GeminiProvider, OpenAIProvider, _OpenAICompatChat
 
 
 class TestAnthropicConvertMessages:
@@ -191,3 +191,126 @@ class TestCapsCache:
         # Now cached
         assert "brand-new-model" in _OpenAICompatChat._model_caps
         assert _OpenAICompatChat._model_caps["brand-new-model"]["use_temperature"] is True
+
+
+class TestGeminiConvertMessages:
+    """Test that OpenAI-format messages convert correctly to Gemini format."""
+
+    def test_system_message_extracted(self):
+        msgs = [
+            {"role": "system", "content": "You are a helper."},
+            {"role": "user", "content": "Hello"},
+        ]
+        system_msg, contents = GeminiProvider._convert_messages(msgs)
+        assert "You are a helper." in system_msg
+        assert len(contents) == 1
+        assert contents[0].role == "user"
+
+    def test_assistant_becomes_model_role(self):
+        msgs = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello!"},
+        ]
+        _, contents = GeminiProvider._convert_messages(msgs)
+        assert len(contents) == 2
+        assert contents[0].role == "user"
+        assert contents[1].role == "model"
+
+    def test_tool_call_conversion(self):
+        msgs = [
+            {"role": "user", "content": "Set a reminder"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {
+                            "name": "manage_reminder",
+                            "arguments": json.dumps({"action": "create"}),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_123",
+                "name": "manage_reminder",
+                "content": '{"result": "done"}',
+            },
+        ]
+        _, contents = GeminiProvider._convert_messages(msgs)
+        assert len(contents) == 3
+        # Assistant (model) should have a function_call part
+        model_parts = contents[1].parts
+        assert any(hasattr(p, "function_call") and p.function_call for p in model_parts)
+        # Tool result should be in a user turn
+        assert contents[2].role == "user"
+        tool_parts = contents[2].parts
+        assert any(hasattr(p, "function_response") and p.function_response for p in tool_parts)
+
+    def test_multiple_system_messages_concatenated(self):
+        msgs = [
+            {"role": "system", "content": "Rule 1."},
+            {"role": "system", "content": "Rule 2."},
+            {"role": "user", "content": "Go"},
+        ]
+        system_msg, contents = GeminiProvider._convert_messages(msgs)
+        assert "Rule 1." in system_msg
+        assert "Rule 2." in system_msg
+        assert len(contents) == 1
+
+    def test_consecutive_tool_results_merged(self):
+        msgs = [
+            {
+                "role": "assistant",
+                "content": "Checking both.",
+                "tool_calls": [
+                    {"id": "a", "type": "function", "function": {"name": "t1", "arguments": "{}"}},
+                    {"id": "b", "type": "function", "function": {"name": "t2", "arguments": "{}"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "a", "name": "t1", "content": "r1"},
+            {"role": "tool", "tool_call_id": "b", "name": "t2", "content": "r2"},
+        ]
+        _, contents = GeminiProvider._convert_messages(msgs)
+        # Model turn + one user turn with both results
+        assert len(contents) == 2
+        assert contents[1].role == "user"
+        assert len(contents[1].parts) == 2
+
+
+class TestGeminiConvertTools:
+    """Test OpenAI tool format → Gemini FunctionDeclaration dict conversion."""
+
+    def test_basic_conversion(self):
+        openai_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "test_tool",
+                    "description": "A test tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"x": {"type": "string"}},
+                        "required": ["x"],
+                    },
+                },
+            }
+        ]
+        result = GeminiProvider._convert_tools(openai_tools)
+        assert len(result) == 1
+        assert result[0]["name"] == "test_tool"
+        assert result[0]["description"] == "A test tool"
+        assert result[0]["parameters"]["type"] == "object"
+
+    def test_multiple_tools(self):
+        tools = [
+            {"type": "function", "function": {"name": "a", "description": "A", "parameters": {}}},
+            {"type": "function", "function": {"name": "b", "description": "B", "parameters": {}}},
+        ]
+        result = GeminiProvider._convert_tools(tools)
+        assert len(result) == 2
+        assert result[0]["name"] == "a"
+        assert result[1]["name"] == "b"

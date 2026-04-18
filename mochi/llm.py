@@ -1,6 +1,6 @@
 """LLM provider abstraction — provider-agnostic.
 
-Supports any OpenAI-compatible API, Azure OpenAI, and Anthropic.
+Supports any OpenAI-compatible API, Azure OpenAI, Anthropic, and Google Gemini.
 
 Usage:
     from mochi.llm import get_client_for_tier
@@ -395,6 +395,158 @@ class AnthropicProvider(LLMProvider):
         return converted
 
 
+class GeminiProvider(LLMProvider):
+    """Google Gemini API provider via the google-genai SDK."""
+
+    def __init__(self, api_key: str, model: str):
+        from google import genai
+        self._model = model
+        self._client = genai.Client(api_key=api_key)
+
+    def provider_name(self) -> str:
+        return "gemini"
+
+    def chat(self, messages: list[dict], tools: list[dict] | None = None,
+             temperature: float = 0.7, max_tokens: int = 2048) -> LLMResponse:
+        from google.genai import types
+
+        system_msg, contents = self._convert_messages(messages)
+
+        config_kwargs: dict = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+        }
+        if system_msg:
+            config_kwargs["system_instruction"] = system_msg.strip()
+        if tools:
+            config_kwargs["tools"] = [
+                types.Tool(function_declarations=self._convert_tools(tools))
+            ]
+
+        resp = self._client.models.generate_content(
+            model=self._model,
+            contents=contents,
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+
+        content = ""
+        tool_calls: list[ToolCallDict] = []
+        candidate = resp.candidates[0] if resp.candidates else None
+        if candidate and candidate.content:
+            for part in candidate.content.parts:
+                if part.text:
+                    content += part.text
+                elif part.function_call:
+                    fc = part.function_call
+                    tool_calls.append({
+                        "id": getattr(fc, "id", "") or fc.name,
+                        "name": fc.name,
+                        "arguments": dict(fc.args) if fc.args else {},
+                    })
+
+        usage = resp.usage_metadata
+        prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0 if usage else 0
+        completion_tokens = getattr(usage, "candidates_token_count", 0) or 0 if usage else 0
+
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            model=self._model,
+            finish_reason=candidate.finish_reason.name if candidate and candidate.finish_reason else "",
+        )
+
+    @staticmethod
+    def _convert_tools(openai_tools: list[dict]) -> list[dict]:
+        """Convert OpenAI tool format to Gemini FunctionDeclaration dicts."""
+        declarations = []
+        for t in openai_tools:
+            func = t.get("function", {})
+            declarations.append({
+                "name": func.get("name", ""),
+                "description": func.get("description", ""),
+                "parameters": func.get("parameters", {}),
+            })
+        return declarations
+
+    @staticmethod
+    def _convert_messages(messages: list[dict]) -> tuple[str, list]:
+        """Convert OpenAI-format messages to Gemini contents.
+
+        Returns (system_instruction, contents_list).
+        Gemini uses 'user' and 'model' roles (not 'assistant').
+        Tool results are sent as Part.from_function_response in a 'user' turn.
+        """
+        from google.genai import types
+
+        system_msg = ""
+        contents = []
+
+        i = 0
+        while i < len(messages):
+            m = messages[i]
+
+            if m["role"] == "system":
+                system_msg += m["content"] + "\n"
+                i += 1
+
+            elif m["role"] == "user":
+                contents.append(
+                    types.Content(role="user", parts=[types.Part(text=m["content"])])
+                )
+                i += 1
+
+            elif m["role"] == "assistant":
+                parts = []
+                if m.get("content"):
+                    parts.append(types.Part(text=m["content"]))
+                if m.get("tool_calls"):
+                    for tc in m["tool_calls"]:
+                        func = tc.get("function", {})
+                        args = func.get("arguments", "{}")
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except json.JSONDecodeError:
+                                args = {}
+                        parts.append(types.Part.from_function_call(
+                            name=func.get("name", ""),
+                            args=args,
+                        ))
+                if parts:
+                    contents.append(types.Content(role="model", parts=parts))
+                i += 1
+
+            elif m["role"] == "tool":
+                # Collect consecutive tool results into one user turn
+                parts = []
+                while i < len(messages) and messages[i]["role"] == "tool":
+                    tm = messages[i]
+                    # Parse content as JSON if possible for structured response
+                    tool_content = tm.get("content", "")
+                    try:
+                        result_data = json.loads(tool_content)
+                    except (json.JSONDecodeError, TypeError):
+                        result_data = {"result": tool_content}
+                    parts.append(types.Part.from_function_response(
+                        name=tm.get("name", ""),
+                        response=result_data,
+                    ))
+                    i += 1
+                contents.append(types.Content(role="user", parts=parts))
+
+            else:
+                # Unknown role — treat as user
+                contents.append(
+                    types.Content(role="user", parts=[types.Part(text=m.get("content", ""))])
+                )
+                i += 1
+
+        return system_msg, contents
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Factory
 # ═══════════════════════════════════════════════════════════════════════════
@@ -431,10 +583,12 @@ def _make_client(provider: str, api_key: str, model: str, base_url: str) -> LLMP
         return AzureOpenAIProvider(api_key=api_key, model=model, base_url=base_url)
     elif provider == "anthropic":
         return AnthropicProvider(api_key=api_key, model=model)
+    elif provider == "gemini":
+        return GeminiProvider(api_key=api_key, model=model)
     else:
         raise ValueError(
             f"Unknown provider: {provider!r}. "
-            "Supported: openai (+ any compatible API), azure_openai, anthropic"
+            "Supported: openai (+ any compatible API), azure_openai, anthropic, gemini"
         )
 
 
