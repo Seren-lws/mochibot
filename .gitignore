@@ -47,3 +47,6 @@ run_admin.py
 
 # Playwright MCP
 .playwright-mcp/
+
+# Live E2E tests (use real LLM + real DB — not for public repo)
+tests/live/
