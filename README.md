@@ -177,7 +177,7 @@ docker compose up -d         # 后台运行
 
 查看日志：`docker compose logs -f`
 
-更新：`git pull && docker compose up -d --build`
+更新：`git pull && docker compose up -d --build`（你的 `data/` 和 `.env` 不受影响）
 
 数据保存在 `data/` 目录，容器删除不丢失。
 通过管理后台修改的 prompt 会写到 `data/prompts/`，也会随这个卷一起持久化。
@@ -195,6 +195,23 @@ python scripts/start.py
 ```
 
 `scripts/start.py` 会在 bot 请求重启时（如通过管理后台的重启按钮）自动重新启动进程。如果直接运行 `python -m mochi.main`，重启按钮将不会生效。
+
+#### 更新
+
+```bash
+cd mochibot                                  # 进入项目目录
+source venv/bin/activate                     # 激活虚拟环境（Windows：venv\Scripts\activate）
+git pull                                     # 拉取最新代码
+pip install -r requirements.txt              # 安装可能新增的依赖
+```
+
+然后重启 bot（重新运行 `python scripts/start.py`，或在管理后台点重启按钮）。
+
+> **数据不会丢**：你的 `.env`、`data/`（数据库、聊天记录）、`data/prompts/`（自定义 prompt）、`venv/` 都在 `.gitignore` 里，`git pull` 不会碰它们。数据库结构变更会在启动时自动完成，无需手动操作。
+
+> 如果 `git pull` 报冲突（你手动改过代码文件），先 `git stash` 暂存改动，再 `git pull`，之后 `git stash pop` 尝试恢复。详见 [新手上路手册 > 更新](docs/getting-started.md#更新-mochibot)。
+
+> 更新后建议对比 `.env.example` 看看有没有新增的配置项——如果有，把新项补进你的 `.env`。
 
 ### 无 Docker 部署（systemd）
 
