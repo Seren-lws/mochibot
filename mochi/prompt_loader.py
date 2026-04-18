@@ -47,7 +47,7 @@ def get_prompt(name: str) -> str:
 # ── Modular system_chat prompt assembly ──────────────────────────────
 
 _SYSTEM_CHAT_DIR = _PROMPTS_DIR / "system_chat"
-_SYSTEM_CHAT_MODULE_ORDER = ("soul", "user", "agent", "runtime_context")
+_SYSTEM_CHAT_MODULE_ORDER = ("soul", "tone", "user", "agent", "runtime_context")
 
 
 def _is_empty_template(content: str) -> bool:
