@@ -703,7 +703,7 @@ if HAS_FASTAPI:
             "db_writable": db_writable,
             "recent_error_count": recent_error_count,
             "version": _get_app_version(),
-            "git_available": (_PROJECT_ROOT / ".git").is_dir(),
+            "git_available": (_PROJECT_ROOT / ".git").exists(),
         }
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -797,7 +797,7 @@ if HAS_FASTAPI:
     @app.post("/api/system/update-check", dependencies=[Depends(_verify_token)])
     async def api_system_update_check():
         _check_update_rate()
-        if not (_PROJECT_ROOT / ".git").is_dir():
+        if not (_PROJECT_ROOT / ".git").exists():
             return {"ok": False, "error": "当前安装不是 Git 仓库，无法通过此方式更新。请使用命令行手动更新。"}
 
         # Fetch latest from remote
@@ -848,7 +848,7 @@ if HAS_FASTAPI:
     @app.post("/api/system/update-apply", dependencies=[Depends(_verify_token)])
     async def api_system_update_apply():
         _check_update_rate()
-        if not (_PROJECT_ROOT / ".git").is_dir():
+        if not (_PROJECT_ROOT / ".git").exists():
             return {"ok": False, "error": "当前安装不是 Git 仓库。"}
 
         # Check for dirty working tree
