@@ -97,7 +97,6 @@ async def _rephrase_reminder(message: str, user_id: int) -> str:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg},
                 ],
-                temperature=0.7,
                 max_tokens=256,
             ),
             timeout=30,

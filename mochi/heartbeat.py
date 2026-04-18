@@ -685,7 +685,6 @@ async def _think(observation: dict, user_id: int) -> dict | None:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": obs_text},
         ],
-        temperature=0.6,
         max_tokens=_effective('THINK_MAX_TOKENS'),
     )
 

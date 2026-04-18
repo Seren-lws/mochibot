@@ -701,7 +701,6 @@ async def chat(message: IncomingMessage) -> ChatResult:
                     client.chat,
                     messages=messages,
                     tools=tools if tools else None,
-                    temperature=0.7,
                     max_tokens=AI_CHAT_MAX_COMPLETION_TOKENS,
                 )
                 break
@@ -890,7 +889,6 @@ async def chat_proactive(findings: list[dict], user_id: int) -> str | None:
         response = await asyncio.to_thread(
             client.chat,
             messages=messages,
-            temperature=0.7,
             max_tokens=PROACTIVE_CHAT_MAX_TOKENS,
         )
 
@@ -996,7 +994,6 @@ async def chat_bedtime_tidy(
                 client.chat,
                 messages=messages,
                 tools=tools if tools else None,
-                temperature=0.7,
                 max_tokens=BEDTIME_TIDY_MAX_TOKENS,
             )
 

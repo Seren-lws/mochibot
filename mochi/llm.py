@@ -48,7 +48,7 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             temperature: float = 0.7, max_tokens: int = 2048) -> LLMResponse:
+             temperature: float = 1.0, max_tokens: int = 2048) -> LLMResponse:
         """Send a chat completion request."""
         ...
 
@@ -228,7 +228,7 @@ class OpenAIProvider(_OpenAICompatChat, LLMProvider):
         return "openai"
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             temperature: float = 0.7, max_tokens: int = 2048) -> LLMResponse:
+             temperature: float = 1.0, max_tokens: int = 2048) -> LLMResponse:
         resp = self._do_chat(self._client, self._model, messages, tools,
                              temperature, max_tokens)
         choice = resp.choices[0]
@@ -256,7 +256,7 @@ class AzureOpenAIProvider(_OpenAICompatChat, LLMProvider):
         return "azure_openai"
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             temperature: float = 0.7, max_tokens: int = 2048) -> LLMResponse:
+             temperature: float = 1.0, max_tokens: int = 2048) -> LLMResponse:
         resp = self._do_chat(self._client, self._deployment, messages, tools,
                              temperature, max_tokens)
         choice = resp.choices[0]
@@ -276,7 +276,7 @@ class AnthropicProvider(LLMProvider):
         return "anthropic"
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             temperature: float = 0.7, max_tokens: int = 2048) -> LLMResponse:
+             temperature: float = 1.0, max_tokens: int = 2048) -> LLMResponse:
         # Separate system message from conversation
         system_msg = ""
         conversation = []
@@ -422,7 +422,7 @@ class GeminiProvider(LLMProvider):
         return "gemini"
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             temperature: float = 0.7, max_tokens: int = 2048) -> LLMResponse:
+             temperature: float = 1.0, max_tokens: int = 2048) -> LLMResponse:
         from google.genai import types
 
         system_msg, contents = self._convert_messages(messages)
