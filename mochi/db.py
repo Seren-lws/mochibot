@@ -434,9 +434,9 @@ def _get_vec_table_dim(conn: sqlite3.Connection) -> int | None:
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_memories'"
     ).fetchone()
-    if not row or not row["sql"]:
+    if not row or not row[0]:
         return None
-    m = re.search(r'float\[(\d+)\]', row["sql"])
+    m = re.search(r'float\[(\d+)\]', row[0])
     return int(m.group(1)) if m else None
 
 
