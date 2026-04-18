@@ -9,6 +9,7 @@ Starts all subsystems:
 
 import asyncio
 import logging
+import signal
 import sys
 
 from mochi.config import (
@@ -168,6 +169,19 @@ async def main():
 
     # Keep running — also watch for restart signal
     restart_event = init_restart_event()
+
+    # Register SIGBREAK handler for graceful shutdown on Windows.
+    # Admin portal sends CTRL_BREAK_EVENT to request a clean restart;
+    # the handler sets restart_event so the loop below picks it up.
+    if sys.platform == "win32" and hasattr(signal, "SIGBREAK"):
+        loop = asyncio.get_running_loop()
+
+        def _on_break(signum, frame):
+            log.info("Received SIGBREAK — initiating graceful shutdown")
+            loop.call_soon_threadsafe(restart_event.set)
+
+        signal.signal(signal.SIGBREAK, _on_break)
+
     try:
         while True:
             sleep_task = asyncio.create_task(asyncio.sleep(3600))

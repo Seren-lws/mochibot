@@ -58,6 +58,31 @@ def _bot_reader_thread(proc: subprocess.Popen):
 
 
 _RESTART_EXIT_CODE = 42
+_GRACEFUL_TIMEOUT = 10   # seconds to wait for bot to exit after signal
+
+
+def _graceful_terminate_proc(proc: subprocess.Popen, timeout: int = _GRACEFUL_TIMEOUT):
+    """Send a graceful shutdown signal, fall back to hard kill.
+
+    On Windows, sends CTRL_BREAK_EVENT (caught by bot's SIGBREAK handler).
+    On Unix, sends SIGTERM (caught by Python's default handler).
+    If the process doesn't exit within *timeout* seconds, force-kills it.
+    """
+    if proc.poll() is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+        else:
+            proc.terminate()       # SIGTERM on Unix
+    except OSError:
+        return                     # already dead
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log.warning("Bot pid %d did not exit in %ds — force killing", proc.pid, timeout)
+        proc.kill()
+        proc.wait(timeout=3)
 
 
 def _bot_monitor_thread(proc: subprocess.Popen):
@@ -67,7 +92,7 @@ def _bot_monitor_thread(proc: subprocess.Popen):
         if rc == _RESTART_EXIT_CODE and _restart_enabled:
             log.info("Bot exited with restart code %d — auto-restarting...",
                      _RESTART_EXIT_CODE)
-            time.sleep(2)  # let old transport connections close
+            time.sleep(0.5)  # brief pause before relaunch
             _start_bot_process()
     except Exception as e:
         log.warning("Bot monitor thread error: %s", e)
@@ -79,11 +104,7 @@ def _start_bot_process():
     _kill_orphaned_bots()
     with _bot_lock:
         if _bot_process and _bot_process.poll() is None:
-            _bot_process.terminate()
-            try:
-                _bot_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                _bot_process.kill()
+            _graceful_terminate_proc(_bot_process)
             _bot_process = None
         _restart_enabled = True
         # Read fresh .env values so newly-saved credentials (e.g. from QR
@@ -93,12 +114,16 @@ def _start_bot_process():
         fresh_dotenv = dotenv_values(_PROJECT_ROOT / ".env")
         env = {**os.environ, **fresh_dotenv, "ADMIN_ENABLED": "false", "PYTHONIOENCODING": "utf-8"}
         _bot_log_lines.clear()
+        # CREATE_NEW_PROCESS_GROUP on Windows so we can send
+        # CTRL_BREAK_EVENT for graceful shutdown without affecting admin.
+        creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
         _bot_process = subprocess.Popen(
             [sys.executable, "-u", "-m", "mochi.main"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             env=env,
             cwd=str(_PROJECT_ROOT),
+            creationflags=creation_flags,
         )
         t = threading.Thread(
             target=_bot_reader_thread, args=(_bot_process,), daemon=True,
@@ -112,16 +137,12 @@ def _start_bot_process():
 
 
 def _kill_bot():
-    """Terminate the bot subprocess if running."""
+    """Gracefully stop the bot subprocess if running."""
     global _bot_process, _restart_enabled
     _restart_enabled = False       # prevent monitor from auto-restarting
     with _bot_lock:
         if _bot_process and _bot_process.poll() is None:
-            _bot_process.terminate()
-            try:
-                _bot_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                _bot_process.kill()
+            _graceful_terminate_proc(_bot_process)
             _bot_process = None
 
 
@@ -131,41 +152,68 @@ def _kill_orphaned_bots():
     When the admin portal restarts, it loses the _bot_process reference but
     old bot subprocesses may still be running and holding the Telegram
     long-polling connection, preventing the new bot from receiving updates.
+
+    Sends a graceful signal first (CTRL_BREAK_EVENT on Windows, SIGTERM on
+    Unix), waits briefly, then force-kills any survivors.
     """
     my_pid = os.getpid()
-    try:
-        if sys.platform == "win32":
-            # WMIC lists PIDs whose command line contains "mochi.main"
-            out = subprocess.check_output(
-                ["wmic", "process", "where",
-                 "CommandLine like '%mochi.main%' and not CommandLine like '%wmic%'",
-                 "get", "ProcessId"],
-                text=True, stderr=subprocess.DEVNULL,
-            )
-            for line in out.strip().splitlines()[1:]:
-                line = line.strip()
-                if line.isdigit():
-                    pid = int(line)
-                    if pid != my_pid:
-                        try:
-                            os.kill(pid, signal.SIGTERM)
-                        except OSError:
-                            pass
-        else:
-            out = subprocess.check_output(
-                ["pgrep", "-f", "mochi.main"], text=True, stderr=subprocess.DEVNULL,
-            )
-            for line in out.strip().splitlines():
-                line = line.strip()
-                if line.isdigit():
-                    pid = int(line)
-                    if pid != my_pid:
-                        try:
-                            os.kill(pid, signal.SIGTERM)
-                        except OSError:
-                            pass
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass  # no matching processes or command not available
+
+    def _find_orphan_pids() -> list[int]:
+        pids: list[int] = []
+        try:
+            if sys.platform == "win32":
+                out = subprocess.check_output(
+                    ["wmic", "process", "where",
+                     "CommandLine like '%mochi.main%' and not CommandLine like '%wmic%'",
+                     "get", "ProcessId"],
+                    text=True, stderr=subprocess.DEVNULL,
+                )
+                for line in out.strip().splitlines()[1:]:
+                    line = line.strip()
+                    if line.isdigit():
+                        pid = int(line)
+                        if pid != my_pid:
+                            pids.append(pid)
+            else:
+                out = subprocess.check_output(
+                    ["pgrep", "-f", "mochi.main"], text=True, stderr=subprocess.DEVNULL,
+                )
+                for line in out.strip().splitlines():
+                    line = line.strip()
+                    if line.isdigit():
+                        pid = int(line)
+                        if pid != my_pid:
+                            pids.append(pid)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+        return pids
+
+    # Phase 1: graceful signal
+    graceful_signal = (
+        signal.CTRL_BREAK_EVENT if sys.platform == "win32" else signal.SIGTERM
+    )
+    pids = _find_orphan_pids()
+    for pid in pids:
+        try:
+            os.kill(pid, graceful_signal)
+        except OSError:
+            pass
+
+    if not pids:
+        return
+
+    # Wait for orphans to exit gracefully
+    time.sleep(5)
+
+    # Phase 2: force-kill survivors
+    for pid in _find_orphan_pids():
+        try:
+            if sys.platform == "win32":
+                os.kill(pid, signal.SIGTERM)   # TerminateProcess on Windows
+            else:
+                os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def _check_port(host: str, port: int) -> None:
@@ -658,16 +706,13 @@ if HAS_FASTAPI:
 
     @app.post("/api/bot/stop", dependencies=[Depends(_verify_token)])
     async def api_bot_stop():
-        global _bot_process
+        global _bot_process, _restart_enabled
+        _restart_enabled = False       # prevent monitor from auto-restarting
         with _bot_lock:
             if not _bot_process or _bot_process.poll() is not None:
                 _bot_process = None
                 raise HTTPException(409, "Bot is not running")
-            _bot_process.terminate()
-            try:
-                _bot_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                _bot_process.kill()
+            _graceful_terminate_proc(_bot_process)
             _bot_process = None
         return {"ok": True}
 
