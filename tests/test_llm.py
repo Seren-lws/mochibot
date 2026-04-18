@@ -280,6 +280,81 @@ class TestGeminiConvertMessages:
         assert contents[1].role == "user"
         assert len(contents[1].parts) == 2
 
+    def test_consecutive_model_turns_merged(self):
+        """Consecutive assistant messages (e.g. proactive heartbeat) must merge."""
+        msgs = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello!"},
+            {"role": "assistant", "content": "By the way..."},  # proactive msg
+        ]
+        _, contents = GeminiProvider._convert_messages(msgs)
+        assert len(contents) == 2  # user + merged model
+        assert contents[1].role == "model"
+        texts = [p.text for p in contents[1].parts if hasattr(p, "text") and p.text]
+        assert "Hello!" in texts
+        assert "By the way..." in texts
+
+    def test_consecutive_user_turns_merged(self):
+        """Consecutive user messages must merge into one user turn."""
+        msgs = [
+            {"role": "user", "content": "First"},
+            {"role": "user", "content": "Second"},
+            {"role": "assistant", "content": "Got it"},
+        ]
+        _, contents = GeminiProvider._convert_messages(msgs)
+        assert len(contents) == 2  # merged user + model
+        assert contents[0].role == "user"
+        assert len(contents[0].parts) == 2
+
+    def test_model_turn_with_tool_calls_after_model_text_merged(self):
+        """Model text turn followed by model tool_call turn — merged correctly."""
+        msgs = [
+            {"role": "user", "content": "Do something"},
+            {"role": "assistant", "content": "Sure"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "t1", "arguments": "{}"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "name": "t1", "content": "ok"},
+        ]
+        _, contents = GeminiProvider._convert_messages(msgs)
+        # user + merged model (text + function_call) + user (tool result)
+        assert len(contents) == 3
+        assert contents[1].role == "model"
+        model_parts = contents[1].parts
+        has_text = any(hasattr(p, "text") and p.text for p in model_parts)
+        has_fc = any(hasattr(p, "function_call") and p.function_call for p in model_parts)
+        assert has_text and has_fc
+
+    def test_expand_history_then_proactive_msg_merged(self):
+        """Simulates _expand_history output + proactive message — no consecutive model."""
+        msgs = [
+            {"role": "user", "content": "Set reminder"},
+            # _expand_history step 1: assistant with tool_calls
+            {
+                "role": "assistant", "content": None,
+                "tool_calls": [
+                    {"id": "h0", "type": "function",
+                     "function": {"name": "manage_reminder", "arguments": "{}"}},
+                ],
+            },
+            # _expand_history step 2: tool result
+            {"role": "tool", "tool_call_id": "h0", "name": "manage_reminder", "content": "OK"},
+            # _expand_history step 3: assistant reply
+            {"role": "assistant", "content": "Done!"},
+            # Proactive heartbeat message (no user msg in between)
+            {"role": "assistant", "content": "Good night~"},
+        ]
+        _, contents = GeminiProvider._convert_messages(msgs)
+        # Verify no consecutive same-role turns
+        for i in range(1, len(contents)):
+            assert contents[i].role != contents[i - 1].role, \
+                f"Consecutive {contents[i].role} turns at index {i - 1},{i}"
+
 
 class TestGeminiConvertTools:
     """Test OpenAI tool format → Gemini FunctionDeclaration dict conversion."""

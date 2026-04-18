@@ -564,6 +564,24 @@ class GeminiProvider(LLMProvider):
                 )
                 i += 1
 
+        # Merge consecutive same-role turns.
+        # Gemini requires strict user/model alternation. Proactive messages
+        # (heartbeat, reminders) can produce consecutive assistant entries in
+        # the conversation history, which become consecutive model turns here.
+        # TODO: upstream cause is heartbeat/reminder saving assistant messages
+        # without a preceding user message — this merge is the adapter-layer fix.
+        if contents:
+            merged: list = [contents[0]]
+            for c in contents[1:]:
+                if c.role == merged[-1].role:
+                    merged[-1] = types.Content(
+                        role=c.role,
+                        parts=list(merged[-1].parts) + list(c.parts),
+                    )
+                else:
+                    merged.append(c)
+            contents = merged
+
         return system_msg, contents
 
 
