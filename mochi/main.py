@@ -80,6 +80,14 @@ async def main():
     skill_registry.init_all_skill_schemas()
     log.info("Skills loaded: %s", skills)
 
+    # 2a. Register diagnostic providers (after skill schemas are initialized)
+    try:
+        from mochi.error_buffer import register_diagnostic_provider
+        from mochi.skills.reminder.queries import get_reminder_diagnostic_section
+        register_diagnostic_provider("reminder_state", get_reminder_diagnostic_section)
+    except Exception as e:
+        log.warning("Could not register reminder diagnostic provider: %s", e)
+
     # 2b. Observers
     from mochi.observers import discover as discover_observers
     observers = discover_observers()

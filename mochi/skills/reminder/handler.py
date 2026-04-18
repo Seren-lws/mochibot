@@ -5,6 +5,7 @@ from datetime import datetime, date as date_type
 from mochi.config import TZ
 from mochi.skills.base import Skill, SkillContext, SkillResult
 from mochi.skills.reminder.queries import create_reminder, get_pending_reminders, mark_reminder_fired
+from mochi.reminder_timer import notify_new_reminder
 
 
 class ReminderSkill(Skill):
@@ -32,10 +33,25 @@ class ReminderSkill(Skill):
 
         if action == "create":
             message = args.get("message", "")
-            remind_at = args.get("remind_at", "")
-            if not message or not remind_at:
+            remind_at_raw = args.get("remind_at", "")
+            if not message or not remind_at_raw:
                 return SkillResult(output="Need both message and remind_at.", success=False)
+
+            try:
+                remind_at_dt = datetime.fromisoformat(remind_at_raw)
+            except (ValueError, TypeError):
+                return SkillResult(
+                    output=f"Invalid remind_at format: {remind_at_raw!r}. "
+                           "Use ISO 8601, e.g. 2026-04-20T14:30:00+08:00",
+                    success=False,
+                )
+
+            if remind_at_dt.tzinfo is None:
+                remind_at_dt = remind_at_dt.replace(tzinfo=TZ)
+
+            remind_at = remind_at_dt.isoformat()
             rid = create_reminder(uid, context.channel_id, message, remind_at)
+            notify_new_reminder()
             return SkillResult(output=f"Reminder #{rid} set for {remind_at}: {message}")
 
         elif action == "list":
@@ -54,6 +70,7 @@ class ReminderSkill(Skill):
                 mark_reminder_fired(int(rid))
             except (ValueError, TypeError):
                 return SkillResult(output=f"Invalid reminder_id: {rid}", success=False)
+            notify_new_reminder()
             return SkillResult(output=f"Reminder #{rid} deleted.")
 
         return SkillResult(output=f"Unknown action: {action}", success=False)

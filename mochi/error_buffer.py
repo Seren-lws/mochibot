@@ -14,6 +14,7 @@ from typing import Callable, List, Optional
 
 _buffer: collections.deque = collections.deque(maxlen=500)
 _log_source: Optional[Callable[[], List[str]]] = None
+_diagnostic_providers: dict[str, Callable[[], str]] = {}
 
 
 # ── BufferHandler ───────────────────────────────────────────────────────
@@ -66,6 +67,15 @@ def register_log_source(fn: Callable[[], List[str]]):
     _log_source = fn
 
 
+def register_diagnostic_provider(name: str, fn: Callable[[], str]) -> None:
+    """Register a callable that returns a diagnostic section as a string.
+
+    Follows the same pattern as register_log_source(). Higher-layer callers
+    (main.py) register providers so error_buffer never imports from skills.
+    """
+    _diagnostic_providers[name] = fn
+
+
 # ── Diagnostic report ───────────────────────────────────────────────────
 
 def _mask(val: str) -> str:
@@ -99,6 +109,11 @@ def get_diagnostic_report() -> str:
     lines.append("  MochiBot Diagnostic Report")
     lines.append("=" * 50)
     lines.append(f"Generated: {now}")
+    try:
+        from mochi import __version__
+        lines.append(f"Version: {__version__}")
+    except Exception:
+        lines.append("Version: unknown")
     lines.append("")
 
     # ── System Info ──
@@ -148,6 +163,18 @@ def get_diagnostic_report() -> str:
         lines.append(f"Path: {db_path}")
         lines.append("Status: NOT FOUND")
     lines.append("")
+
+    # ── Diagnostic Providers (registered at startup) ──
+    for provider_name, provider_fn in _diagnostic_providers.items():
+        try:
+            section_text = provider_fn()
+            if section_text:
+                lines.append(section_text)
+                lines.append("")
+        except Exception as e:
+            lines.append(f"--- {provider_name} ---")
+            lines.append(f"(provider failed: {e})")
+            lines.append("")
 
     # ── Recent Errors (24h) ──
     errors = get_recent_errors(24)
