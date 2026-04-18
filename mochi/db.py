@@ -415,6 +415,31 @@ def _init_fts(conn: sqlite3.Connection) -> None:
         _FTS_AVAILABLE = False
 
 
+def _get_embed_dim() -> int:
+    """Get embedding dimension: probed from model pool if available, else config fallback."""
+    try:
+        from mochi.model_pool import get_pool
+        pool = get_pool()
+        dim = pool.get_embed_dim()
+        if dim:
+            return dim
+    except Exception:
+        pass
+    from mochi.config import VEC_EMBEDDING_DIM
+    return VEC_EMBEDDING_DIM
+
+
+def _get_vec_table_dim(conn: sqlite3.Connection) -> int | None:
+    """Read the dimension of existing vec_memories table from its schema SQL."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='vec_memories'"
+    ).fetchone()
+    if not row or not row["sql"]:
+        return None
+    m = re.search(r'float\[(\d+)\]', row["sql"])
+    return int(m.group(1)) if m else None
+
+
 def _init_vec(conn: sqlite3.Connection) -> None:
     """Initialize sqlite-vec virtual table for native vector KNN (optional)."""
     global _VEC_AVAILABLE
@@ -424,31 +449,48 @@ def _init_vec(conn: sqlite3.Connection) -> None:
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
 
+        target_dim = _get_embed_dim()
+
         vec_exists = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='vec_memories'"
         ).fetchone()
+
+        if vec_exists:
+            current_dim = _get_vec_table_dim(conn)
+            if current_dim and current_dim != target_dim:
+                logger.warning(
+                    "vec_memories dimension mismatch: table=%d, model=%d — rebuilding",
+                    current_dim, target_dim,
+                )
+                conn.execute("DROP TABLE vec_memories")
+                vec_exists = None  # fall through to creation + backfill
+
         if not vec_exists:
-            from mochi.config import VEC_EMBEDDING_DIM
             conn.execute(
                 f"CREATE VIRTUAL TABLE vec_memories USING vec0("
                 f"item_id INTEGER PRIMARY KEY, "
-                f"embedding float[{VEC_EMBEDDING_DIM}] distance_metric=cosine)"
+                f"embedding float[{target_dim}] distance_metric=cosine)"
             )
             count = 0
             for r in conn.execute(
                 "SELECT id, embedding FROM memory_items WHERE embedding IS NOT NULL"
             ).fetchall():
-                conn.execute(
-                    "INSERT INTO vec_memories(item_id, embedding) VALUES (?, ?)",
-                    (r["id"], r["embedding"]),
-                )
-                count += 1
+                emb = r["embedding"]
+                emb_dim = len(emb) // 4 if emb else 0
+                if emb_dim == target_dim:
+                    conn.execute(
+                        "INSERT INTO vec_memories(item_id, embedding) VALUES (?, ?)",
+                        (r["id"], emb),
+                    )
+                    count += 1
             conn.commit()
             if count:
-                logger.info("Created vec_memories and backfilled %d rows", count)
+                logger.info("Created vec_memories (dim=%d) and backfilled %d rows", target_dim, count)
+            else:
+                logger.info("Created vec_memories (dim=%d), no matching embeddings to backfill", target_dim)
 
         _VEC_AVAILABLE = True
-        logger.info("sqlite-vec loaded, native vector search enabled")
+        logger.info("sqlite-vec loaded, native vector search enabled (dim=%d)", target_dim)
     except ImportError:
         logger.info("sqlite-vec not installed (pip install sqlite-vec for native vector search)")
         _VEC_AVAILABLE = False

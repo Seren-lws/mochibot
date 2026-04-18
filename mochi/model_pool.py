@@ -227,6 +227,8 @@ class ModelPool:
         self._embed_model = ""
         self._embed_cache = _TTLCache(EMBEDDING_CACHE_MAX_SIZE, EMBEDDING_CACHE_TTL_S)
 
+        self._embed_dim: int | None = None  # probed from actual model on init
+
         try:
             e_prov, e_key, e_model, e_base = _resolve_embedding_config()
             self._embed_client, self._embed_model = _make_embed_client(
@@ -234,6 +236,7 @@ class ModelPool:
             )
             if self._embed_client:
                 log.info("Embedding configured: provider=%s model=%s", e_prov, e_model)
+                self._probe_embed_dim()
             else:
                 log.info("Embedding disabled (provider=%s)", e_prov or "none")
         except Exception as e:
@@ -297,6 +300,22 @@ class ModelPool:
     # -------------------------------------------------------------------
     # Embedding
     # -------------------------------------------------------------------
+
+    def _probe_embed_dim(self) -> None:
+        """Probe the embedding model with a short test string to detect dimension."""
+        try:
+            resp = self._embed_client.embeddings.create(
+                model=self._embed_model, input="dimension probe",
+            )
+            vec = resp.data[0].embedding
+            self._embed_dim = len(vec)
+            log.info("Probed embedding dimension: %d", self._embed_dim)
+        except Exception as e:
+            log.warning("Embedding dimension probe failed: %s", e)
+
+    def get_embed_dim(self) -> int | None:
+        """Return probed embedding dimension, or None if not available."""
+        return self._embed_dim
 
     def embed(self, text: str) -> bytes | None:
         """Generate embedding vector, return as packed float32 bytes. Cached."""
