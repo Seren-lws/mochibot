@@ -100,16 +100,16 @@ else
     echo ""
 fi
 
-while true; do
+set +e
+.venv/bin/python -m mochi.admin
+EXIT_CODE=$?
+set -e
+while [ "$EXIT_CODE" -eq 43 ]; do
+    echo ""
+    echo "  [INFO] Admin server restarting..."
+    echo ""
     set +e
-    .venv/bin/python -m mochi.admin
+    .venv/bin/python -m mochi.admin --no-browser
     EXIT_CODE=$?
     set -e
-    if [ "$EXIT_CODE" -eq 43 ]; then
-        echo ""
-        echo "  [INFO] Admin server restarting..."
-        echo ""
-        continue
-    fi
-    break
 done

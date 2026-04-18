@@ -76,12 +76,13 @@ echo       Then open http://localhost:8080?token=YOUR_TOKEN
 echo    2. Phone setup: only fill transport token, start bot, send /admin
 echo.
 
-:admin_loop
 .venv\Scripts\python.exe -m mochi.admin
+:admin_restart
 if %errorlevel% equ 43 (
     echo.
     echo  [INFO] Admin server restarting...
     echo.
-    goto admin_loop
+    .venv\Scripts\python.exe -m mochi.admin --no-browser
+    goto admin_restart
 )
 pause
