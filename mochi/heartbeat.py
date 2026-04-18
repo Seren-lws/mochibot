@@ -700,6 +700,19 @@ async def _think(observation: dict, user_id: int) -> dict | None:
             return result
     except json.JSONDecodeError:
         content = response.content
+        # Strip markdown code fences (```json ... ```)
+        if "```" in content:
+            import re
+            m = re.search(r"```(?:json)?\s*\n?(.*?)```", content, re.DOTALL)
+            if m:
+                content = m.group(1).strip()
+                try:
+                    result = json.loads(content)
+                    if isinstance(result, dict):
+                        return result
+                except json.JSONDecodeError:
+                    pass
+        # Fallback: extract first { ... last }
         start = content.find("{")
         end = content.rfind("}") + 1
         if start >= 0 and end > start:
