@@ -851,15 +851,16 @@ if HAS_FASTAPI:
         if not (_PROJECT_ROOT / ".git").exists():
             return {"ok": False, "error": "当前安装不是 Git 仓库。"}
 
-        # Check for dirty working tree
+        # Check for dirty working tree (ignore untracked files)
         rc, status_out = _run_git("status", "--porcelain")
         if rc != 0:
             return {"ok": False, "error": f"无法检查工作区状态：{status_out}"}
-        if status_out:
+        dirty_lines = [l for l in status_out.splitlines() if not l.startswith("??")]
+        if dirty_lines:
             return {
                 "ok": False,
                 "error": "检测到本地代码改动，请先处理后再更新。",
-                "dirty_files": status_out,
+                "dirty_files": "\n".join(dirty_lines),
                 "hint": "在终端执行 git stash（暂存改动）或 git checkout .（放弃改动），然后再试。",
             }
 
