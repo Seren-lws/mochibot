@@ -1904,7 +1904,7 @@ if HAS_FASTAPI:
 # Startup
 # ═══════════════════════════════════════════════════════════════════════════
 
-async def start_admin_server(port: int = 8080, bind: str = "127.0.0.1"):
+async def start_admin_server(port: int = 8080, bind: str = "0.0.0.0"):
     """Start the admin portal as an async task."""
     global _EMBEDDED_MODE
     _EMBEDDED_MODE = True
