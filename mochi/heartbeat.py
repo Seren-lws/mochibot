@@ -662,6 +662,10 @@ async def _think(observation: dict, user_id: int) -> dict | None:
 
     system_prompt = think_template.replace("{soul_personality}", soul)
 
+    now = datetime.now(TZ)
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S %z")
+    system_prompt += f"\n\n当前时间：{now_str}"
+
     core_memory = get_core_memory(user_id)
     if core_memory:
         system_prompt += f"\n\n## 你对用户的了解\n{core_memory}"

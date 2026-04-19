@@ -427,6 +427,9 @@ def _build_system_prompt(user_id: int, usage_rules: str = "",
     if "soul" in modules:
         parts.append(modules["soul"])
 
+    # Current time — primacy position so LLM anchors on it
+    parts.append(f"当前时间：{now_str}")
+
     if "user" in modules:
         parts.append(modules["user"])
 
