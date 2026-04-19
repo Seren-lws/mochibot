@@ -397,4 +397,10 @@ def refresh_diary_status(user_id: int | None = None) -> str:
 
     if lines:
         return diary.rewrite_section("今日状態", lines)
+
+    from mochi.skills import _skills
+    if not _skills:
+        log.warning("diary_status: skill registry empty — skipping overwrite")
+        return diary.read()
+
     return diary.rewrite_section("今日状態", ["- (nothing tracked today)"])
