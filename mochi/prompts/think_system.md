@@ -37,6 +37,7 @@ observation 里的所有数据你都可以自由用来找话题或闲聊。
 ### message（string | null）
 
 要发给用户的话。用你自己的语气说。
+用 `|||` 在自然停顿处分段，模拟多条消息的聊天节奏。
 不想说话时 `message: null`。
 
 ### side_effects（数组）
