@@ -48,13 +48,45 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             temperature: float = 1.0, max_tokens: int = 2048) -> LLMResponse:
-        """Send a chat completion request."""
+             temperature: float = 1.0, max_tokens: int = 2048,
+             json_mode: bool = False) -> LLMResponse:
+        """Send a chat completion request.
+
+        json_mode=True asks the provider to return strict JSON. Each provider
+        maps this to its native capability (response_format / response_mime_type).
+        Anthropic has no native JSON mode — caller must rely on prompting plus
+        the framework-layer markdown fence strip.
+        """
         ...
 
     @abstractmethod
     def provider_name(self) -> str:
         ...
+
+
+_FENCE_RE = None
+
+
+def _strip_json_fence(content: str) -> str:
+    """Strip a single markdown code fence wrapping a JSON payload.
+
+    Only invoked when the caller passed json_mode=True. Safe to call when
+    there is no fence — returns content unchanged.
+
+    Handles the dominant failure mode observed across providers (gpt-5.2-chat,
+    Gemini Flash, Haiku): ```json\\n{...}\\n``` or ```\\n{...}\\n```.
+    """
+    global _FENCE_RE
+    if _FENCE_RE is None:
+        import re
+        _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*\n?(.*?)\n?\s*```\s*$",
+                               re.DOTALL)
+    if not content:
+        return content
+    m = _FENCE_RE.match(content)
+    if m:
+        return m.group(1).strip()
+    return content
 
 
 def _parse_openai_tool_calls(choice) -> list[ToolCallDict]:
@@ -106,6 +138,13 @@ class _OpenAICompatChat:
     # GIL-safe: dict read/write is atomic; values are write-once per model.
     _model_caps: dict[str, dict[str, bool]] = {}
 
+    # Class-level cache for response_format (json_mode) capability.
+    # Keyed by (model, base_url) because the same model name on different
+    # endpoints (e.g. real OpenAI vs self-hosted vLLM exposing "gpt-4o")
+    # may have divergent json_mode support.
+    # Value: True = supports response_format, False = does not.
+    _json_mode_caps: dict[tuple[str, str], bool] = {}
+
     # Per-instance capability flags (set after first successful call)
     # None = unknown, True = supported, False = not supported
     _use_max_completion_tokens: bool | None = None
@@ -134,7 +173,8 @@ class _OpenAICompatChat:
 
     def _do_chat(self, client, model: str, messages: list[dict],
                  tools: list[dict] | None, temperature: float,
-                 max_tokens: int) -> Any:
+                 max_tokens: int, json_mode: bool = False,
+                 base_url: str = "") -> Any:
         """Call chat.completions.create with auto-negotiation."""
         from openai import BadRequestError
 
@@ -160,6 +200,16 @@ class _OpenAICompatChat:
             kwargs["temperature"] = temperature
         # else: omit temperature entirely
 
+        # --- json_mode (response_format) ---
+        # Cache key uses base_url because the same model name on different
+        # endpoints can have divergent capability.
+        json_cache_key = (model, base_url)
+        json_mode_supported = self._json_mode_caps.get(json_cache_key)
+        sent_response_format = False
+        if json_mode and json_mode_supported is not False:
+            kwargs["response_format"] = {"type": "json_object"}
+            sent_response_format = True
+
         try:
             resp = client.chat.completions.create(**kwargs)
             # Success — lock in the capabilities
@@ -168,6 +218,10 @@ class _OpenAICompatChat:
                 log.debug("Model %s: using max_completion_tokens", model)
             if self._use_temperature is None:
                 self._use_temperature = True
+            if sent_response_format and json_mode_supported is None:
+                self._json_mode_caps[json_cache_key] = True
+                log.debug("Model %s @ %s: json_mode supported",
+                          model, base_url or "default")
             self._save_caps_to_cache(model)
             return resp
         except BadRequestError as e:
@@ -198,6 +252,18 @@ class _OpenAICompatChat:
                 log.info("Model %s: disabling temperature", model)
                 retried = True
 
+            # Handle unsupported response_format — broad fallback.
+            # Don't match on error text; if we sent response_format and got
+            # any 400, drop it and retry once. If retry also fails, the
+            # original problem wasn't response_format.
+            if sent_response_format:
+                self._json_mode_caps[json_cache_key] = False
+                kwargs.pop("response_format", None)
+                sent_response_format = False
+                log.info("Model %s @ %s: json_mode unsupported, falling back",
+                         model, base_url or "default")
+                retried = True
+
             if retried:
                 resp = client.chat.completions.create(**kwargs)
                 # Lock in capabilities from the successful retry
@@ -216,6 +282,7 @@ class OpenAIProvider(_OpenAICompatChat, LLMProvider):
     def __init__(self, api_key: str, model: str, base_url: str = ""):
         from openai import OpenAI
         self._model = model
+        self._base_url = base_url
         self._use_max_completion_tokens = None
         self._use_temperature = None
         self._init_caps_from_cache(model)
@@ -228,12 +295,17 @@ class OpenAIProvider(_OpenAICompatChat, LLMProvider):
         return "openai"
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             temperature: float = 1.0, max_tokens: int = 2048) -> LLMResponse:
+             temperature: float = 1.0, max_tokens: int = 2048,
+             json_mode: bool = False) -> LLMResponse:
         resp = self._do_chat(self._client, self._model, messages, tools,
-                             temperature, max_tokens)
+                             temperature, max_tokens, json_mode=json_mode,
+                             base_url=self._base_url)
         choice = resp.choices[0]
-        return _openai_response(choice, resp.usage, self._model,
-                                _parse_openai_tool_calls(choice))
+        response = _openai_response(choice, resp.usage, self._model,
+                                    _parse_openai_tool_calls(choice))
+        if json_mode and response.content:
+            response.content = _strip_json_fence(response.content)
+        return response
 
 
 class AzureOpenAIProvider(_OpenAICompatChat, LLMProvider):
@@ -243,6 +315,7 @@ class AzureOpenAIProvider(_OpenAICompatChat, LLMProvider):
                  api_version: str = ""):
         from openai import AzureOpenAI
         self._deployment = model
+        self._base_url = base_url
         self._use_max_completion_tokens = None
         self._use_temperature = None
         self._init_caps_from_cache(model)
@@ -256,12 +329,17 @@ class AzureOpenAIProvider(_OpenAICompatChat, LLMProvider):
         return "azure_openai"
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             temperature: float = 1.0, max_tokens: int = 2048) -> LLMResponse:
+             temperature: float = 1.0, max_tokens: int = 2048,
+             json_mode: bool = False) -> LLMResponse:
         resp = self._do_chat(self._client, self._deployment, messages, tools,
-                             temperature, max_tokens)
+                             temperature, max_tokens, json_mode=json_mode,
+                             base_url=self._base_url)
         choice = resp.choices[0]
-        return _openai_response(choice, resp.usage, self._deployment,
-                                _parse_openai_tool_calls(choice))
+        response = _openai_response(choice, resp.usage, self._deployment,
+                                    _parse_openai_tool_calls(choice))
+        if json_mode and response.content:
+            response.content = _strip_json_fence(response.content)
+        return response
 
 
 class AnthropicProvider(LLMProvider):
@@ -276,7 +354,10 @@ class AnthropicProvider(LLMProvider):
         return "anthropic"
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             temperature: float = 1.0, max_tokens: int = 2048) -> LLMResponse:
+             temperature: float = 1.0, max_tokens: int = 2048,
+             json_mode: bool = False) -> LLMResponse:
+        # Anthropic has no native JSON mode. Caller must rely on prompting.
+        # Framework-layer strip below is the safety net (gated on json_mode).
         # Separate system message from conversation
         system_msg = ""
         conversation = []
@@ -314,6 +395,9 @@ class AnthropicProvider(LLMProvider):
                     "name": block.name,
                     "arguments": block.input,
                 })
+
+        if json_mode and content:
+            content = _strip_json_fence(content)
 
         return LLMResponse(
             content=content,
@@ -422,7 +506,8 @@ class GeminiProvider(LLMProvider):
         return "gemini"
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             temperature: float = 1.0, max_tokens: int = 2048) -> LLMResponse:
+             temperature: float = 1.0, max_tokens: int = 2048,
+             json_mode: bool = False) -> LLMResponse:
         from google.genai import types
 
         system_msg, contents = self._convert_messages(messages)
@@ -437,6 +522,12 @@ class GeminiProvider(LLMProvider):
             config_kwargs["tools"] = [
                 types.Tool(function_declarations=self._convert_tools(tools))
             ]
+        if json_mode:
+            # response_mime_type is stable across google-genai SDK versions.
+            # Tool calls and JSON mode are mutually exclusive in Gemini, so
+            # only set it when no tools requested.
+            if not tools:
+                config_kwargs["response_mime_type"] = "application/json"
 
         resp = self._client.models.generate_content(
             model=self._model,
@@ -458,6 +549,9 @@ class GeminiProvider(LLMProvider):
                         "name": fc.name,
                         "arguments": dict(fc.args) if fc.args else {},
                     })
+
+        if json_mode and content:
+            content = _strip_json_fence(content)
 
         usage = resp.usage_metadata
         prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0 if usage else 0

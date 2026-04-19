@@ -1,7 +1,7 @@
 """Tests for chat migration module.
 
 Covers: parse_chatgpt_export, _traverse_conversation, preprocess,
-_parse_llm_json, _code_density, apply_migration.
+_code_density, apply_migration.
 """
 
 import json
@@ -12,7 +12,6 @@ from mochi.admin.migration import (
     parse_chatgpt_export,
     _traverse_conversation,
     preprocess,
-    _parse_llm_json,
     _code_density,
     _dedup_memory_items,
     estimate_context_fit,
@@ -165,28 +164,8 @@ class TestPreprocess:
         assert result.filtered_message_count == 0
 
 
-# ── _parse_llm_json ───────────────────────────────────────────────────────
-
-class TestParseLlmJson:
-
-    def test_direct_json(self):
-        data = {"soul": "friendly", "memory_items": []}
-        result = _parse_llm_json(json.dumps(data))
-        assert result == data
-
-    def test_markdown_fence(self):
-        text = "Here is the result:\n```json\n{\"soul\": \"kind\"}\n```"
-        result = _parse_llm_json(text)
-        assert result["soul"] == "kind"
-
-    def test_embedded_json(self):
-        text = "The extracted data is: {\"soul\": \"warm\"} and that's it."
-        result = _parse_llm_json(text)
-        assert result["soul"] == "warm"
-
-    def test_unparseable(self):
-        with pytest.raises(ValueError, match="无法解析为 JSON"):
-            _parse_llm_json("no json here at all")
+# ── _parse_llm_json removed: provider layer now handles json_mode ──────────
+# (response_format / response_mime_type + framework-layer markdown strip)
 
 
 # ── estimate_context_fit ──────────────────────────────────────────────────

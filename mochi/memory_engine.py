@@ -146,6 +146,7 @@ def extract_memories(user_id: int = 0) -> int:
         ],
         temperature=0.3,
         max_tokens=1024,
+        json_mode=True,
     )
 
     log_usage(
@@ -309,6 +310,7 @@ def deduplicate_memories(user_id: int = 0) -> int:
             ],
             temperature=0.2,
             max_tokens=1024,
+            json_mode=True,
         )
 
         log_usage(
@@ -395,6 +397,7 @@ def remove_outdated_memories(user_id: int = 0) -> dict:
                 ],
                 temperature=0.2,
                 max_tokens=1024,
+                json_mode=True,
             )
 
             log_usage(
@@ -541,6 +544,7 @@ def rebalance_salience(user_id: int = 0) -> dict:
             ],
             temperature=0.2,
             max_tokens=512,
+            json_mode=True,
         )
 
         log_usage(
@@ -730,6 +734,7 @@ def extract_kg(user_id: int = 0) -> dict:
             ],
             temperature=0.2,
             max_tokens=200,
+            json_mode=True,
         )
         log_usage(
             response.prompt_tokens, response.completion_tokens,

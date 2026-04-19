@@ -254,6 +254,7 @@ async def classify_skills_llm(message: str, user_id: int | None = None,
             ],
             temperature=0.0,
             max_tokens=TOOL_ROUTER_MAX_TOKENS,
+            json_mode=True,
         )
 
         log_usage(

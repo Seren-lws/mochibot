@@ -690,6 +690,7 @@ async def _think(observation: dict, user_id: int) -> dict | None:
             {"role": "user", "content": obs_text},
         ],
         max_tokens=_effective('THINK_MAX_TOKENS'),
+        json_mode=True,
     )
 
     log_usage(
@@ -697,33 +698,14 @@ async def _think(observation: dict, user_id: int) -> dict | None:
         response.total_tokens, model=response.model, purpose="heartbeat_think",
     )
 
-    # Parse JSON result
+    # Parse JSON result. Provider layer enforces JSON output natively
+    # (response_format / response_mime_type) and strips any markdown fence
+    # for json_mode=True; this except branch is the last-resort safety net.
     try:
         result = json.loads(response.content)
         if isinstance(result, dict):
             return result
     except json.JSONDecodeError:
-        content = response.content
-        # Strip markdown code fences (```json ... ```)
-        if "```" in content:
-            import re
-            m = re.search(r"```(?:json)?\s*\n?(.*?)```", content, re.DOTALL)
-            if m:
-                content = m.group(1).strip()
-                try:
-                    result = json.loads(content)
-                    if isinstance(result, dict):
-                        return result
-                except json.JSONDecodeError:
-                    pass
-        # Fallback: extract first { ... last }
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                return json.loads(content[start:end])
-            except json.JSONDecodeError:
-                pass
         log.warning("Think response was not valid JSON")
     return None
 

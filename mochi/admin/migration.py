@@ -372,11 +372,12 @@ def _run_extract(job_id: str, session_id: str, model_name: str,
             {"role": "system", "content": _build_extraction_prompt(granularity)},
             {"role": "user", "content": transcript},
         ]
-        response = client.chat(messages, temperature=0.2, max_tokens=4096)
-        content = response.content.strip()
-
-        # Parse JSON — handle possible markdown fences
-        parsed = _parse_llm_json(content)
+        response = client.chat(messages, temperature=0.2, max_tokens=4096,
+                               json_mode=True)
+        # Provider layer enforces JSON output (response_format /
+        # response_mime_type) and strips markdown fences for json_mode=True.
+        # JSONDecodeError surfaces to the outer except below as a job error.
+        parsed = json.loads(response.content)
 
         # Post-process: deduplicate memory items
         if "memory_items" in parsed and isinstance(parsed["memory_items"], list):
@@ -390,33 +391,6 @@ def _run_extract(job_id: str, session_id: str, model_name: str,
         log.exception("Migration extraction job %s failed", job_id)
         _jobs[job_id]["status"] = "error"
         _jobs[job_id]["error"] = str(e)[:1000]
-
-
-def _parse_llm_json(text: str) -> dict:
-    """Parse JSON from LLM response, handling markdown code fences."""
-    # Try direct parse first
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Try extracting from markdown fence
-    m = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError:
-            pass
-
-    # Try finding the outermost {...}
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except json.JSONDecodeError:
-            pass
-
-    raise ValueError("LLM 返回的内容无法解析为 JSON，请重试或换用其他模型")
 
 
 def _dedup_memory_items(items: list[dict]) -> list[dict]:

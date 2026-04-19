@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.5
+
+### Bug Fixes
+- 修复了 bot 频繁"听不懂话"的问题 —— router 的 JSON 解析失败率从最高 75% 降到 0%（通过用 LLM 原生 JSON Mode 取代 prompt 求模型输出 JSON）
+- 修复 diary 在 skill registry 为空时被 `refresh_diary_status` 误清空数据的 bug
+- `dump_think_prompt` 工具现在与实际 `_think()` 的 prompt 组装逻辑保持一致
+- 强化 chat / think prompt 中的当前时间提示
+- proactive / reminder prompt 补齐 `|||` 气泡分隔符
+
+### Improvements
+- LLM 框架层引入 `json_mode` 参数：OpenAI/Azure 走 `response_format` + 能力缓存 +  BadRequest 1-shot 重试，Gemini 走 `response_mime_type`，Anthropic 在框架层统一剥 markdown 围栏
+- 将原本散落在 3 处的 markdown-strip 兜底逻辑（heartbeat、migration、memory_engine）整合到框架层统一处理
+- 新增 23 个 LLM JSON mode 单元测试覆盖围栏剥离 / OpenAI 能力缓存 / Gemini 配置 / Anthropic 触发条件
+
 ## v0.8.4
 
 ### New Features
